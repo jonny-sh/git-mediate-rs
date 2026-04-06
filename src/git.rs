@@ -112,7 +112,7 @@ pub fn stage_file(path: &Path) -> Result<()> {
 /// Set `merge.conflictstyle` to `diff3`.
 pub fn set_conflict_style() -> Result<()> {
     let output = Command::new("git")
-        .args(["config", "merge.conflictstyle", "diff3"])
+        .args(["config", "--global", "merge.conflictstyle", "diff3"])
         .output()
         .context("failed to run git config")?;
     if !output.status.success() {

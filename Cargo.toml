@@ -3,6 +3,14 @@ name = "git-mediate"
 version = "0.1.0"
 edition = "2024"
 description = "Automatically resolve trivial git merge conflicts"
+license = "GPL-2.0-only"
+repository = "https://github.com/jonny-sh/git-mediate-rs"
+homepage = "https://github.com/jonny-sh/git-mediate-rs"
+documentation = "https://docs.rs/git-mediate"
+readme = "README.md"
+keywords = ["git", "merge", "conflict", "diff3"]
+categories = ["command-line-utilities", "development-tools"]
+rust-version = "1.85"
 
 [dependencies]
 similar = "3"

@@ -41,10 +41,16 @@ git-mediate applies these strategies in order:
 
 ## Installation
 
+### From crates.io
+
+```shell
+cargo install git-mediate
+```
+
 ### From source
 
 ```shell
-git clone https://github.com/user/git-mediate-rs
+git clone https://github.com/jonny-sh/git-mediate-rs
 cd git-mediate-rs
 cargo install --path .
 ```
@@ -64,7 +70,7 @@ cargo build --release --target aarch64-pc-windows-msvc
 First, make sure your git is configured to use diff3 conflict style (or use `-s`):
 
 ```shell
-git-mediate -s   # sets merge.conflictstyle = diff3
+git-mediate -s   # sets the global merge.conflictstyle = diff3
 ```
 
 Then, from a git repository with merge conflicts:
@@ -133,6 +139,4 @@ This is a port of [git-mediate](https://github.com/Peaker/git-mediate) by **Eyal
 
 ## License
 
-Copyright (C) 2014-2024 Eyal Lotem (original Haskell implementation)
-
-The original git-mediate is licensed under the GNU General Public License v2.0. See the [original repository](https://github.com/Peaker/git-mediate) for details.
+This Rust port is distributed under the GNU General Public License v2.0 only (`GPL-2.0-only`), matching the original [git-mediate](https://github.com/Peaker/git-mediate) project by Eyal Lotem. See [LICENSE](LICENSE).
