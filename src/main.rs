@@ -13,7 +13,11 @@ use git_mediate::resolve::resolve_chunks;
 use git_mediate::types::{Chunk, FileResult, UnmergedStatus};
 
 #[derive(Parser)]
-#[command(name = "git-mediate", version, about = "Automatically resolve trivial git merge conflicts")]
+#[command(
+    name = "git-mediate",
+    version,
+    about = "Automatically resolve trivial git merge conflicts"
+)]
 struct Cli {
     /// Open $EDITOR on files with remaining conflicts
     #[arg(short = 'e', long = "editor")]
@@ -78,15 +82,15 @@ fn main() -> Result<()> {
         colored::control::set_override(true);
     }
 
-    // Check we're in a git repo
-    let _root = git::repo_root().context("must be run inside a git repository")?;
-
     // Handle -s: set conflict style and exit
     if cli.set_conflict_style {
         git::set_conflict_style()?;
         println!("Set merge.conflictstyle = diff3");
         return Ok(());
     }
+
+    // Check we're in a git repo
+    let _root = git::repo_root().context("must be run inside a git repository")?;
 
     // Verify diff3 conflict style
     git::ensure_diff3_conflict_style()?;
@@ -150,8 +154,7 @@ fn main() -> Result<()> {
         if result.is_fully_resolved() && result.total_conflicts() > 0 {
             files_fully_resolved += 1;
             if !cli.dry_run && !cli.no_add {
-                git::stage_file(path)
-                    .with_context(|| format!("failed to stage {}", path_str))?;
+                git::stage_file(path).with_context(|| format!("failed to stage {}", path_str))?;
             }
         }
 
@@ -181,12 +184,9 @@ fn main() -> Result<()> {
 
 /// Process a file: parse, resolve, write back.
 /// Returns the stats and any remaining (unresolved) conflicts.
-fn process_file(
-    path: &Path,
-    cli: &Cli,
-) -> Result<(FileResult, Vec<git_mediate::types::Conflict>)> {
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
+fn process_file(path: &Path, cli: &Cli) -> Result<(FileResult, Vec<git_mediate::types::Conflict>)> {
+    let content =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
 
     let chunks = match parse_conflicts(&content) {
         Ok(chunks) => chunks,
@@ -226,12 +226,10 @@ fn process_file(
 /// directory, then rename over the target.
 fn atomic_write(path: &Path, content: &[u8]) -> Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
-    let mut tmp = tempfile::NamedTempFile::new_in(dir)
-        .context("failed to create temp file")?;
+    let mut tmp = tempfile::NamedTempFile::new_in(dir).context("failed to create temp file")?;
     tmp.write_all(content)
         .context("failed to write temp file")?;
-    tmp.persist(path)
-        .context("failed to rename temp file")?;
+    tmp.persist(path).context("failed to rename temp file")?;
     Ok(())
 }
 

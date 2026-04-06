@@ -95,7 +95,10 @@ fn test_full_pipeline_on_real_conflict() {
 
     // The output should not contain conflict markers if fully resolved
     if stats.is_fully_resolved() {
-        assert!(!output.contains("<<<<<<<"), "resolved output should not have markers");
+        assert!(
+            !output.contains("<<<<<<<"),
+            "resolved output should not have markers"
+        );
         assert!(output.contains("modified-by-a"));
         assert!(output.contains("modified-by-b"));
     }
@@ -202,4 +205,40 @@ after
 
     // Should be unchanged since the conflict can't be resolved
     assert_eq!(content, output);
+}
+
+#[test]
+fn test_set_conflict_style_works_outside_repo() {
+    let home = tempfile::tempdir().unwrap();
+    let config_home = home.path().join("xdg");
+    fs::create_dir_all(&config_home).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-mediate"))
+        .arg("-s")
+        .current_dir(home.path())
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", &config_home)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "git-mediate -s failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let git_config = Command::new("git")
+        .args(["config", "--global", "merge.conflictstyle"])
+        .current_dir(home.path())
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", &config_home)
+        .output()
+        .unwrap();
+
+    assert!(
+        git_config.status.success(),
+        "git config --global failed: {}",
+        String::from_utf8_lossy(&git_config.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&git_config.stdout).trim(), "diff3");
 }
