@@ -213,7 +213,7 @@ fn process_file(path: &Path, cli: &Cli) -> Result<(FileResult, Vec<git_mediate::
         })
         .collect();
 
-    if stats.resolved > 0 && !cli.dry_run {
+    if (stats.resolved > 0 || stats.partially_resolved > 0) && !cli.dry_run {
         let new_content = chunks_to_string(&resolved_chunks);
         atomic_write(path, new_content.as_bytes())
             .with_context(|| format!("failed to write {}", path.display()))?;

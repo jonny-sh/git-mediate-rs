@@ -242,3 +242,66 @@ fn test_set_conflict_style_works_outside_repo() {
     );
     assert_eq!(String::from_utf8_lossy(&git_config.stdout).trim(), "diff3");
 }
+
+#[test]
+fn test_partial_reduction_is_written_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("file.txt");
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(dir.path())
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+
+    git(&["init"]);
+    git(&["config", "merge.conflictstyle", "diff3"]);
+
+    let original = "\
+<<<<<<< HEAD
+common
+ours
+tail
+||||||| ancestor
+common
+base
+tail
+=======
+common
+theirs
+tail
+>>>>>>> branch
+";
+    fs::write(&file_path, original).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-mediate"))
+        .args(["--merge-file", "file.txt"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "git-mediate should still fail on reduced-but-unresolved conflicts"
+    );
+
+    let rewritten = fs::read_to_string(&file_path).unwrap();
+    assert_ne!(rewritten, original, "reduced conflict should be written back");
+    assert!(!rewritten.contains("common\nours\ntail"));
+    assert!(!rewritten.contains("common\nbase\ntail"));
+    assert!(!rewritten.contains("common\ntheirs\ntail"));
+    assert!(rewritten.contains("<<<<<<< HEAD\nours"));
+    assert!(rewritten.contains("||||||| ancestor\nbase"));
+    assert!(rewritten.contains("=======\ntheirs"));
+}
