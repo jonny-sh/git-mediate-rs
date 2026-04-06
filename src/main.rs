@@ -134,7 +134,7 @@ fn main() -> Result<()> {
 
     for path_str in &files_to_process {
         let path = Path::new(path_str);
-        let (result, remaining_conflicts) = process_file(path, &cli)?;
+        let (result, remaining_conflicts, had_conflicts) = process_file(path, &cli)?;
         print_file_result(path_str, &result);
 
         // Show diffs for remaining conflicts
@@ -151,7 +151,7 @@ fn main() -> Result<()> {
             }
         }
 
-        if result.is_fully_resolved() && result.total_conflicts() > 0 {
+        if result.is_fully_resolved() && (result.total_conflicts() > 0 || !had_conflicts) {
             files_fully_resolved += 1;
             if !cli.dry_run && !cli.no_add {
                 git::stage_file(path).with_context(|| format!("failed to stage {}", path_str))?;
@@ -184,7 +184,10 @@ fn main() -> Result<()> {
 
 /// Process a file: parse, resolve, write back.
 /// Returns the stats and any remaining (unresolved) conflicts.
-fn process_file(path: &Path, cli: &Cli) -> Result<(FileResult, Vec<git_mediate::types::Conflict>)> {
+fn process_file(
+    path: &Path,
+    cli: &Cli,
+) -> Result<(FileResult, Vec<git_mediate::types::Conflict>, bool)> {
     let content =
         fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
 
@@ -198,9 +201,11 @@ fn process_file(path: &Path, cli: &Cli) -> Result<(FileResult, Vec<git_mediate::
                     ..Default::default()
                 },
                 Vec::new(),
+                false,
             ));
         }
     };
+    let had_conflicts = chunks.iter().any(|chunk| matches!(chunk, Chunk::Conflict(_)));
 
     let (resolved_chunks, stats) = resolve_chunks(chunks);
 
@@ -219,7 +224,7 @@ fn process_file(path: &Path, cli: &Cli) -> Result<(FileResult, Vec<git_mediate::
             .with_context(|| format!("failed to write {}", path.display()))?;
     }
 
-    Ok((stats, remaining))
+    Ok((stats, remaining, had_conflicts))
 }
 
 /// Write content to a file atomically: write to a temp file in the same

@@ -305,3 +305,34 @@ tail
     assert!(rewritten.contains("||||||| ancestor\nbase"));
     assert!(rewritten.contains("=======\ntheirs"));
 }
+
+#[test]
+fn test_manually_resolved_file_gets_staged() {
+    let dir = setup_conflict_repo();
+    let file_path = dir.path().join("file.txt");
+
+    fs::write(&file_path, "line1\nmanual-resolution\nline3\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-mediate"))
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "git-mediate failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let status = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        status.status.success(),
+        "git status failed: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&status.stdout).trim(), "M  file.txt");
+}
