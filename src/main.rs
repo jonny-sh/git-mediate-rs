@@ -101,7 +101,13 @@ fn main() -> Result<()> {
 
     // Get file list
     let files_to_process: Vec<_> = if let Some(ref path) = cli.merge_file {
-        vec![path.clone()]
+        vec![(
+            path.clone(),
+            matches!(
+                git::unmerged_status(path)?,
+                Some(UnmergedStatus::DeletedByUs | UnmergedStatus::DeletedByThem)
+            ),
+        )]
     } else {
         let unmerged = git::unmerged_files()?;
         if unmerged.is_empty() {
@@ -113,14 +119,10 @@ fn main() -> Result<()> {
         for file in &unmerged {
             match file.status {
                 UnmergedStatus::DeletedByUs | UnmergedStatus::DeletedByThem => {
-                    println!(
-                        "{} {} (deleted on one side, skipping)",
-                        "skip:".yellow(),
-                        file.path
-                    );
+                    paths.push((file.path.clone(), true));
                 }
                 UnmergedStatus::BothModified => {
-                    paths.push(file.path.clone());
+                    paths.push((file.path.clone(), false));
                 }
             }
         }
@@ -136,8 +138,14 @@ fn main() -> Result<()> {
     let mut files_fully_resolved = 0usize;
     let use_color = cli.use_color();
 
-    for path_str in &files_to_process {
+    for (path_str, is_delete_modify) in &files_to_process {
         let path = Path::new(path_str);
+        if *is_delete_modify && !cli.dry_run {
+            git::prepare_delete_modify_conflict(path).with_context(|| {
+                format!("failed to prepare delete/modify conflict for {}", path_str)
+            })?;
+        }
+
         let (result, remaining_conflicts, had_conflicts) = process_file(path, &cli)?;
         print_file_result(path_str, &result);
 
@@ -155,9 +163,15 @@ fn main() -> Result<()> {
             }
         }
 
+        let removed_empty_file = if *is_delete_modify && !cli.dry_run {
+            git::remove_file_if_empty(path)?
+        } else {
+            false
+        };
+
         if result.is_fully_resolved() && (result.total_conflicts() > 0 || !had_conflicts) {
             files_fully_resolved += 1;
-            if !cli.dry_run && !cli.no_add {
+            if !cli.dry_run && !cli.no_add && !removed_empty_file {
                 git::stage_file(path).with_context(|| format!("failed to stage {}", path_str))?;
             }
         }

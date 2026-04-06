@@ -55,17 +55,25 @@ fn parse_status_output(raw: &str) -> Result<Vec<UnmergedFile>> {
 
         let status = match xy {
             "UU" => UnmergedStatus::BothModified,
+            "AA" => UnmergedStatus::BothModified,
+            "DA" | "AD" => UnmergedStatus::BothModified,
             "DU" => UnmergedStatus::DeletedByUs,
             "UD" => UnmergedStatus::DeletedByThem,
-            "AA" => UnmergedStatus::BothModified, // both added, treat like UU
-            "DD" | "AU" | "UA" => continue,       // skip other unmerged states for now
-            _ => continue,                        // not unmerged
+            "DD" | "AU" | "UA" => continue,
+            _ => continue,
         };
 
         files.push(UnmergedFile { status, path });
     }
 
     Ok(files)
+}
+
+pub fn unmerged_status(path: &str) -> Result<Option<UnmergedStatus>> {
+    Ok(unmerged_files()?
+        .into_iter()
+        .find(|file| file.path == path)
+        .map(|file| file.status))
 }
 
 fn current_conflict_style() -> Result<Option<String>> {
@@ -146,6 +154,53 @@ pub fn stage_file(path: &Path) -> Result<()> {
     Ok(())
 }
 
+pub fn prepare_delete_modify_conflict(path: &Path) -> Result<()> {
+    let current =
+        std::fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    if current.lines().any(|line| line.starts_with("<<<<<<<")) {
+        return Ok(());
+    }
+
+    let base = read_stage_file(path, 1)?.unwrap_or_default();
+    let ours = read_stage_file(path, 2)?.unwrap_or_default();
+    let theirs = read_stage_file(path, 3)?.unwrap_or_default();
+
+    let conflict = format!(
+        "<<<<<<< LOCAL\n{}||||||| BASE\n{}=======\n{}>>>>>>> REMOTE\n",
+        ensure_trailing_newline(&ours),
+        ensure_trailing_newline(&base),
+        ensure_trailing_newline(&theirs)
+    );
+
+    std::fs::write(path, conflict)
+        .with_context(|| format!("failed to write {}", path.display()))?;
+    Ok(())
+}
+
+pub fn remove_file_if_empty(path: &Path) -> Result<bool> {
+    let content =
+        std::fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    if !content.is_empty() {
+        return Ok(false);
+    }
+
+    std::fs::remove_file(path).with_context(|| format!("failed to remove {}", path.display()))?;
+    let output = Command::new("git")
+        .args(["add", "-u", "--"])
+        .arg(path)
+        .output()
+        .context("failed to run git add -u")?;
+    if !output.status.success() {
+        bail!(
+            "git add -u failed for {}: {}",
+            path.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    Ok(true)
+}
+
 /// Open the user's editor at a specific file and line.
 pub fn open_editor(path: &Path, line: usize) -> Result<()> {
     let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
@@ -168,6 +223,29 @@ pub fn open_editor(path: &Path, line: usize) -> Result<()> {
         Ok(s) if s.success() => Ok(()),
         Ok(s) => bail!("editor exited with status {}", s),
         Err(e) => bail!("failed to launch editor '{}': {}", editor, e),
+    }
+}
+
+fn read_stage_file(path: &Path, stage: u8) -> Result<Option<String>> {
+    let output = Command::new("git")
+        .arg("show")
+        .arg(format!(":{}:{}", stage, path.to_string_lossy()))
+        .output()
+        .context("failed to run git show")?;
+    if output.status.success() {
+        return String::from_utf8(output.stdout)
+            .map(Some)
+            .context("invalid utf-8 in git show output");
+    }
+
+    Ok(None)
+}
+
+fn ensure_trailing_newline(content: &str) -> String {
+    if content.is_empty() || content.ends_with('\n') {
+        content.to_string()
+    } else {
+        format!("{content}\n")
     }
 }
 
@@ -205,5 +283,15 @@ mod tests {
         let raw = "M  modified.rs\0A  added.rs\0";
         let files = parse_status_output(raw).unwrap();
         assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_parse_status_add_add_and_delete_add() {
+        let raw = "AA both_added.rs\0DA delete_add.rs\0AD add_delete.rs\0";
+        let files = parse_status_output(raw).unwrap();
+        assert_eq!(files.len(), 3);
+        assert_eq!(files[0].status, UnmergedStatus::BothModified);
+        assert_eq!(files[1].status, UnmergedStatus::BothModified);
+        assert_eq!(files[2].status, UnmergedStatus::BothModified);
     }
 }

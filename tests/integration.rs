@@ -414,3 +414,75 @@ fn test_manually_resolved_file_gets_staged() {
     );
     assert_eq!(String::from_utf8_lossy(&status.stdout).trim(), "M  file.txt");
 }
+
+#[test]
+fn test_delete_modify_conflict_is_prepared_for_mediation() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(p)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+
+    git(&["init"]);
+    git(&["config", "merge.conflictstyle", "diff3"]);
+    fs::write(p.join("file.txt"), "hello\n").unwrap();
+    git(&["add", "file.txt"]);
+    git(&["commit", "-m", "base"]);
+
+    git(&["checkout", "-b", "delete-branch"]);
+    git(&["rm", "file.txt"]);
+    git(&["commit", "-m", "delete"]);
+
+    git(&["checkout", "main"]);
+    git(&["checkout", "-b", "modify-branch"]);
+    fs::write(p.join("file.txt"), "hello\nchange\n").unwrap();
+    git(&["add", "file.txt"]);
+    git(&["commit", "-m", "modify"]);
+
+    let merge = Command::new("git")
+        .args(["merge", "delete-branch"])
+        .current_dir(p)
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@test.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@test.com")
+        .output()
+        .unwrap();
+    assert!(!merge.status.success());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-mediate"))
+        .current_dir(p)
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "git-mediate should still fail on unresolved delete/modify conflicts"
+    );
+
+    let content = fs::read_to_string(p.join("file.txt")).unwrap();
+    assert!(content.contains("<<<<<<< LOCAL"));
+    assert!(content.contains("||||||| BASE"));
+    assert!(content.contains(">>>>>>> REMOTE"));
+
+    let status = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(p)
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&status.stdout).trim(), "UD file.txt");
+}
