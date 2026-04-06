@@ -10,7 +10,7 @@ use crate::types::Conflict;
 /// Shows two diffs:
 /// - "Ours" (side A) vs base
 /// - "Theirs" (side B) vs base
-pub fn show_side_diffs(conflict: &Conflict, color: bool) -> String {
+pub fn show_side_diffs(conflict: &Conflict, color: bool, context: usize) -> String {
     let base_text = conflict.bodies.base.join("\n");
     let a_text = conflict.bodies.a.join("\n");
     let b_text = conflict.bodies.b.join("\n");
@@ -31,7 +31,7 @@ pub fn show_side_diffs(conflict: &Conflict, color: bool) -> String {
         conflict.start_line()
     )
     .unwrap();
-    format_diff(&mut out, &base_text, &a_text, color);
+    format_diff(&mut out, &base_text, &a_text, color, context);
 
     writeln!(
         out,
@@ -44,26 +44,28 @@ pub fn show_side_diffs(conflict: &Conflict, color: bool) -> String {
         conflict.start_line()
     )
     .unwrap();
-    format_diff(&mut out, &base_text, &b_text, color);
+    format_diff(&mut out, &base_text, &b_text, color, context);
 
     out
 }
 
 /// Display a direct diff between side A and side B.
-pub fn show_diff2(conflict: &Conflict, color: bool) -> String {
+pub fn show_diff2(conflict: &Conflict, color: bool, context: usize) -> String {
     let a_text = conflict.bodies.a.join("\n");
     let b_text = conflict.bodies.b.join("\n");
 
     let mut out = String::new();
     writeln!(out, "--- line {}", conflict.start_line()).unwrap();
-    format_diff(&mut out, &a_text, &b_text, color);
+    format_diff(&mut out, &a_text, &b_text, color, context);
     out
 }
 
-fn format_diff(out: &mut String, old: &str, new: &str, color: bool) {
+fn format_diff(out: &mut String, old: &str, new: &str, color: bool, context: usize) {
     let diff = TextDiff::from_lines(old, new);
+    let changes: Vec<_> = diff.iter_all_changes().collect();
+    let trimmed = trim_changes(&changes, context);
 
-    for change in diff.iter_all_changes() {
+    for change in trimmed {
         let (sign, line) = match change.tag() {
             ChangeTag::Delete => ("-", change.value()),
             ChangeTag::Insert => ("+", change.value()),
@@ -82,6 +84,26 @@ fn format_diff(out: &mut String, old: &str, new: &str, color: bool) {
         }
         .unwrap();
     }
+}
+
+fn trim_changes<'a>(changes: &'a [similar::Change<&'a str>], context: usize) -> &'a [similar::Change<&'a str>] {
+    if changes.is_empty() {
+        return changes;
+    }
+
+    let start_equal = changes
+        .iter()
+        .take_while(|change| change.tag() == ChangeTag::Equal)
+        .count();
+    let end_equal = changes
+        .iter()
+        .rev()
+        .take_while(|change| change.tag() == ChangeTag::Equal)
+        .count();
+
+    let start = start_equal.saturating_sub(context);
+    let end = (changes.len() - end_equal + context).min(changes.len());
+    &changes[start..end]
 }
 
 #[cfg(test)]
@@ -106,7 +128,7 @@ mod tests {
     #[test]
     fn test_side_diffs_no_color() {
         let c = make_conflict(&["changed_a"], &["original"], &["changed_b"]);
-        let output = show_side_diffs(&c, false);
+        let output = show_side_diffs(&c, false, 3);
 
         assert!(output.contains("HEAD"));
         assert!(output.contains("feature"));
@@ -118,7 +140,7 @@ mod tests {
     #[test]
     fn test_diff2_no_color() {
         let c = make_conflict(&["line_a"], &["base"], &["line_b"]);
-        let output = show_diff2(&c, false);
+        let output = show_diff2(&c, false, 3);
 
         assert!(output.contains("-line_a"));
         assert!(output.contains("+line_b"));
@@ -127,7 +149,7 @@ mod tests {
     #[test]
     fn test_side_diffs_one_side_unchanged() {
         let c = make_conflict(&["original"], &["original"], &["changed"]);
-        let output = show_side_diffs(&c, false);
+        let output = show_side_diffs(&c, false, 3);
 
         // A vs base should show no changes (just equal lines)
         // B vs base should show a change
