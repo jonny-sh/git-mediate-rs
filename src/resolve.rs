@@ -1,38 +1,187 @@
 use crate::types::{Chunk, Conflict, Resolution, Sides};
 
-/// Attempt to resolve a single conflict.
+/// Attempt to resolve a single conflict by applying strategies in sequence.
 ///
 /// Resolution strategies (applied in order):
-/// 1. **Trivial** — all three sides identical → resolved
-/// 2. **One-side unchanged** — if A==base, take B (and vice versa)
-/// 3. **Both same change** — if A==B (but ≠ base), take A
-/// 4. **Prefix/suffix reduction** — strip common leading/trailing lines,
+/// 1. **Line endings normalization** — strip `\r` differences, retry trivial
+/// 2. **Trivial** — all three sides identical → resolved
+/// 3. **One-side unchanged** — if A==base, take B (and vice versa)
+/// 4. **Both same change** — if A==B (but ≠ base), take A
+/// 5. **Indentation-aware** — strip common leading whitespace, retry trivial
+/// 6. **Prefix/suffix reduction** — strip common leading/trailing lines,
 ///    then re-check the reduced conflict
 pub fn resolve_conflict(conflict: &Conflict) -> Resolution {
+    // First try line-ending normalization
+    if let Some(res) = try_line_endings(conflict) {
+        return res;
+    }
+
+    // Core trivial checks
+    if let Some(res) = try_trivial(conflict) {
+        return res;
+    }
+
+    // Indentation-aware resolution
+    if let Some(res) = try_indentation(conflict) {
+        return res;
+    }
+
+    // Prefix/suffix reduction
+    try_reduce(conflict)
+}
+
+/// Try trivial resolution: all-equal, one-side-unchanged, both-same-change.
+fn try_trivial(conflict: &Conflict) -> Option<Resolution> {
     let a = &conflict.bodies.a;
     let base = &conflict.bodies.base;
     let b = &conflict.bodies.b;
 
-    // 1. All three sides identical
     if a == base && base == b {
-        return Resolution::Resolved(lines_to_string(a));
+        return Some(Resolution::Resolved(lines_to_string(a)));
     }
-
-    // 2. One side unchanged from base
     if a == base {
-        return Resolution::Resolved(lines_to_string(b));
+        return Some(Resolution::Resolved(lines_to_string(b)));
     }
     if b == base {
-        return Resolution::Resolved(lines_to_string(a));
+        return Some(Resolution::Resolved(lines_to_string(a)));
     }
-
-    // 3. Both made the same change
     if a == b {
-        return Resolution::Resolved(lines_to_string(a));
+        return Some(Resolution::Resolved(lines_to_string(a)));
+    }
+    None
+}
+
+/// Normalize line endings (strip `\r`) across all sides, then retry trivial.
+fn try_line_endings(conflict: &Conflict) -> Option<Resolution> {
+    let normalize = |lines: &[String]| -> Vec<String> {
+        lines.iter().map(|l| l.replace('\r', "")).collect()
+    };
+
+    let norm_a = normalize(&conflict.bodies.a);
+    let norm_base = normalize(&conflict.bodies.base);
+    let norm_b = normalize(&conflict.bodies.b);
+
+    // Only useful if normalization actually changed something
+    if norm_a == conflict.bodies.a && norm_base == conflict.bodies.base && norm_b == conflict.bodies.b {
+        return None;
     }
 
-    // 4. Try prefix/suffix reduction
-    try_reduce(conflict)
+    let mut normalized = conflict.clone();
+    normalized.bodies = Sides::new(norm_a, norm_base, norm_b);
+    try_trivial(&normalized)
+}
+
+/// Resolve conflicts where one side re-indented code while the other changed content.
+///
+/// The approach:
+/// 1. Compute each side's common indentation prefix independently
+/// 2. Strip each side by its own prefix
+/// 3. Resolve indent and content as two independent trivial merges
+/// 4. Combine winning indent + winning content
+///
+/// Example: base=`    foo`, A=`        foo` (re-indented), B=`    bar` (changed content)
+/// → indent: A changed (4→8), B unchanged → take A's indent (8 spaces)
+/// → content: A unchanged ("foo"), B changed → take B's content ("bar")
+/// → result: `        bar`
+fn try_indentation(conflict: &Conflict) -> Option<Resolution> {
+    let a = &conflict.bodies.a;
+    let base = &conflict.bodies.base;
+    let b = &conflict.bodies.b;
+
+    // Compute each side's own common indent (longest whitespace prefix
+    // shared by all non-empty lines within that side)
+    let indent_a = common_indent(a);
+    let indent_base = common_indent(base);
+    let indent_b = common_indent(b);
+
+    // If all indents are identical, indentation isn't the issue — bail out
+    if indent_a == indent_base && indent_base == indent_b {
+        return None;
+    }
+
+    // Strip each side by its own indent
+    let strip = |lines: &[String], indent: &str| -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| {
+                if indent.is_empty() {
+                    l.clone()
+                } else if l.starts_with(indent) {
+                    l[indent.len()..].to_string()
+                } else if l.trim().is_empty() {
+                    l.clone()
+                } else {
+                    l.clone()
+                }
+            })
+            .collect()
+    };
+
+    let stripped_a = strip(a, &indent_a);
+    let stripped_base = strip(base, &indent_base);
+    let stripped_b = strip(b, &indent_b);
+
+    // Resolve indentation trivially (three-way merge of the indent strings)
+    let resolved_indent = trivial_pick(&indent_a, &indent_base, &indent_b)?;
+
+    // Resolve content trivially (three-way merge of the stripped lines)
+    let resolved_content = trivial_pick(&stripped_a, &stripped_base, &stripped_b)?;
+
+    // Re-apply the resolved indent to the resolved content
+    let result: Vec<String> = resolved_content
+        .iter()
+        .map(|l| {
+            if l.trim().is_empty() {
+                l.clone()
+            } else {
+                format!("{}{}", resolved_indent, l)
+            }
+        })
+        .collect();
+
+    Some(Resolution::Resolved(lines_to_string(&result)))
+}
+
+/// Three-way trivial merge: if one side matches base, take the other.
+/// If both sides are equal, take either. Otherwise, conflict.
+fn trivial_pick<'a, T: PartialEq>(a: &'a T, base: &'a T, b: &'a T) -> Option<&'a T> {
+    if a == base && base == b {
+        Some(a)
+    } else if a == base {
+        Some(b)
+    } else if b == base {
+        Some(a)
+    } else if a == b {
+        Some(a)
+    } else {
+        None
+    }
+}
+
+/// Find the longest whitespace prefix common to all non-empty lines within a single side.
+fn common_indent(lines: &[String]) -> String {
+    let mut prefix: Option<String> = None;
+
+    for line in lines {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let ws: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+        prefix = Some(match prefix {
+            None => ws,
+            Some(existing) => common_string_prefix(&existing, &ws),
+        });
+    }
+
+    prefix.unwrap_or_default()
+}
+
+fn common_string_prefix(a: &str, b: &str) -> String {
+    a.chars()
+        .zip(b.chars())
+        .take_while(|(ca, cb)| ca == cb)
+        .map(|(c, _)| c)
+        .collect()
 }
 
 /// Strip common prefix and suffix lines from a conflict, producing a reduced conflict.
@@ -313,5 +462,142 @@ after
             }
             other => panic!("expected Resolved, got {:?}", other),
         }
+    }
+
+    // --- Line endings tests ---
+
+    #[test]
+    fn test_line_endings_crlf_vs_lf_a_unchanged() {
+        // A has CRLF, base and B have LF — only difference is line endings
+        // A matches base after normalization → take B
+        let c = make_conflict(&["same\r"], &["same"], &["changed"]);
+        let res = resolve_conflict(&c);
+        assert!(matches!(res, Resolution::Resolved(text) if text == "changed\n"));
+    }
+
+    #[test]
+    fn test_line_endings_all_same_after_strip() {
+        let c = make_conflict(&["line\r"], &["line"], &["line\r"]);
+        let res = resolve_conflict(&c);
+        assert!(matches!(res, Resolution::Resolved(_)));
+    }
+
+    #[test]
+    fn test_line_endings_no_effect_on_real_conflict() {
+        // Real content difference, not just line endings
+        let c = make_conflict(&["ours\r"], &["base"], &["theirs"]);
+        let res = resolve_conflict(&c);
+        // After normalization: ours != base != theirs — still a conflict
+        assert!(matches!(
+            res,
+            Resolution::Unchanged | Resolution::PartiallyReduced(_)
+        ));
+    }
+
+    // --- Indentation tests ---
+
+    #[test]
+    fn test_indent_reindent_plus_content_change() {
+        // The key use case: A re-indented (4→8 spaces), B changed content.
+        // Should merge: A's indent + B's content.
+        let c = make_conflict(
+            &["        foo", "        bar"],  // A: re-indented to 8 spaces
+            &["    foo", "    bar"],           // base: 4 spaces
+            &["    foo", "    baz"],           // B: changed bar→baz, kept indent
+        );
+        let res = resolve_conflict(&c);
+        match res {
+            Resolution::Resolved(text) => {
+                assert_eq!(text, "        foo\n        baz\n");
+            }
+            other => panic!("expected Resolved, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_indent_content_change_plus_reindent() {
+        // Mirror: A changed content, B re-indented.
+        let c = make_conflict(
+            &["    foo", "    baz"],           // A: changed bar→baz
+            &["    foo", "    bar"],           // base: 4 spaces
+            &["        foo", "        bar"],  // B: re-indented to 8 spaces
+        );
+        let res = resolve_conflict(&c);
+        match res {
+            Resolution::Resolved(text) => {
+                assert_eq!(text, "        foo\n        baz\n");
+            }
+            other => panic!("expected Resolved, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_indent_both_reindented_same_way() {
+        // Both sides re-indented identically, one also changed content.
+        let c = make_conflict(
+            &["        foo", "        baz"],  // A: re-indented + changed content
+            &["    foo", "    bar"],           // base
+            &["        foo", "        bar"],  // B: only re-indented
+        );
+        let res = resolve_conflict(&c);
+        // indent: A==B → take either (8 spaces)
+        // content: B==base after strip → take A's content
+        match res {
+            Resolution::Resolved(text) => {
+                assert_eq!(text, "        foo\n        baz\n");
+            }
+            other => panic!("expected Resolved, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_indent_same_indent_no_help() {
+        // All sides have the same indentation — strategy should bail out,
+        // fall through to other strategies.
+        let c = make_conflict(
+            &["    ours"],
+            &["    base"],
+            &["    theirs"],
+        );
+        let res = resolve_conflict(&c);
+        // Same indent on all sides → indentation can't help, real conflict
+        assert!(matches!(res, Resolution::Unchanged | Resolution::PartiallyReduced(_)));
+    }
+
+    #[test]
+    fn test_indent_conflicting_reindent_and_content() {
+        // Both sides changed indent differently AND changed content → unresolvable
+        let c = make_conflict(
+            &["        ours"],   // A: 8-space indent + different content
+            &["    base"],       // base: 4-space indent
+            &["      theirs"],   // B: 6-space indent + different content
+        );
+        let res = resolve_conflict(&c);
+        assert!(matches!(res, Resolution::Unchanged | Resolution::PartiallyReduced(_)));
+    }
+
+    #[test]
+    fn test_indent_only_reindent_no_content_change() {
+        // A re-indented, B unchanged → take A (just an indent change)
+        let c = make_conflict(
+            &["        foo", "        bar"],  // A: re-indented
+            &["    foo", "    bar"],           // base
+            &["    foo", "    bar"],           // B: unchanged
+        );
+        let res = resolve_conflict(&c);
+        match res {
+            Resolution::Resolved(text) => {
+                assert_eq!(text, "        foo\n        bar\n");
+            }
+            other => panic!("expected Resolved, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_indent_no_indent_at_all() {
+        // No whitespace prefix on any side — should bail out
+        let c = make_conflict(&["ours"], &["base"], &["theirs"]);
+        let res = resolve_conflict(&c);
+        assert!(matches!(res, Resolution::Unchanged));
     }
 }
