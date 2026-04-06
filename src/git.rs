@@ -68,27 +68,64 @@ fn parse_status_output(raw: &str) -> Result<Vec<UnmergedFile>> {
     Ok(files)
 }
 
-/// Ensure `merge.conflictstyle` is set to `diff3`.
-pub fn ensure_diff3_conflict_style() -> Result<()> {
+fn current_conflict_style() -> Result<Option<String>> {
     let output = Command::new("git")
         .args(["config", "merge.conflictstyle"])
         .output()
         .context("failed to run git config")?;
 
-    let current = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-    if current != "diff3" && current != "zdiff3" {
-        bail!(
-            "merge.conflictstyle is '{}', but git-mediate requires 'diff3' (or 'zdiff3').\n\
-             Run: git config merge.conflictstyle diff3",
-            if current.is_empty() {
-                "merge (default)"
-            } else {
-                &current
-            }
-        );
+    if output.status.success() {
+        return Ok(Some(String::from_utf8_lossy(&output.stdout).trim().to_string()));
     }
 
+    if output.status.code() == Some(1) {
+        return Ok(None);
+    }
+
+    bail!(
+        "git config failed: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+}
+
+/// Ensure `merge.conflictstyle` is set to `diff3`.
+pub fn ensure_diff3_conflict_style(set_if_needed: bool) -> Result<()> {
+    let current = current_conflict_style()?;
+
+    if !matches!(current.as_deref(), Some("diff3" | "zdiff3")) {
+        if !set_if_needed {
+            bail!(
+                "merge.conflictstyle is '{}', but git-mediate requires 'diff3' (or 'zdiff3').\n\
+                 Run: git config merge.conflictstyle diff3",
+                current.as_deref().unwrap_or("unset")
+            );
+        }
+
+        set_conflict_style()?;
+
+        let updated = current_conflict_style()?;
+        if updated.as_deref() != Some("diff3") {
+            bail!(
+                "attempt to set merge.conflictstyle failed; a repo-local git config may still override it"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Set `merge.conflictstyle` to `diff3`.
+pub fn set_conflict_style() -> Result<()> {
+    let output = Command::new("git")
+        .args(["config", "--global", "merge.conflictstyle", "diff3"])
+        .output()
+        .context("failed to run git config")?;
+    if !output.status.success() {
+        bail!(
+            "failed to set merge.conflictstyle: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
     Ok(())
 }
 
@@ -103,21 +140,6 @@ pub fn stage_file(path: &Path) -> Result<()> {
         bail!(
             "git add failed for {}: {}",
             path.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    Ok(())
-}
-
-/// Set `merge.conflictstyle` to `diff3`.
-pub fn set_conflict_style() -> Result<()> {
-    let output = Command::new("git")
-        .args(["config", "--global", "merge.conflictstyle", "diff3"])
-        .output()
-        .context("failed to run git config")?;
-    if !output.status.success() {
-        bail!(
-            "failed to set merge.conflictstyle: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }

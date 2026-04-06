@@ -244,6 +244,84 @@ fn test_set_conflict_style_works_outside_repo() {
 }
 
 #[test]
+fn test_set_conflict_style_continues_processing() {
+    let dir = setup_conflict_repo();
+    let home = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("file.txt");
+
+    let unset_local = Command::new("git")
+        .args(["config", "--unset", "merge.conflictstyle"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(unset_local.status.success());
+
+    let set_global = Command::new("git")
+        .args(["config", "--global", "merge.conflictstyle", "diff2"])
+        .current_dir(dir.path())
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(set_global.status.success());
+
+    fs::write(&file_path, "line1\nmanual-resolution\nline3\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-mediate"))
+        .arg("-s")
+        .current_dir(dir.path())
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "git-mediate -s failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let global_style = Command::new("git")
+        .args(["config", "--global", "merge.conflictstyle"])
+        .current_dir(dir.path())
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&global_style.stdout).trim(), "diff3");
+
+    let status = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&status.stdout).trim(), "M  file.txt");
+}
+
+#[test]
+fn test_set_conflict_style_fails_when_local_override_remains() {
+    let dir = setup_conflict_repo();
+    let home = tempfile::tempdir().unwrap();
+
+    let output = Command::new("git")
+        .args(["config", "merge.conflictstyle", "diff2"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-mediate"))
+        .arg("-s")
+        .current_dir(dir.path())
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "git-mediate -s unexpectedly succeeded with a repo-local override"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("override"));
+}
+
+#[test]
 fn test_partial_reduction_is_written_back() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("file.txt");

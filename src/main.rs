@@ -32,7 +32,7 @@ struct Cli {
     show_diff2: bool,
 
     /// Set merge.conflictstyle to diff3
-    #[arg(short = 's', long = "set-conflict-style")]
+    #[arg(short = 's', long = "style", alias = "set-conflict-style")]
     set_conflict_style: bool,
 
     /// Process only this file instead of all unmerged files
@@ -82,18 +82,22 @@ fn main() -> Result<()> {
         colored::control::set_override(true);
     }
 
-    // Handle -s: set conflict style and exit
-    if cli.set_conflict_style {
-        git::set_conflict_style()?;
-        println!("Set merge.conflictstyle = diff3");
-        return Ok(());
-    }
+    // Check whether we're in a repo before trying to mediate files.
+    let in_repo = match git::repo_root() {
+        Ok(root) => Some(root),
+        Err(err) => {
+            if cli.set_conflict_style {
+                git::ensure_diff3_conflict_style(true)?;
+                println!("Set merge.conflictstyle = diff3");
+                return Ok(());
+            }
+            return Err(err).context("must be run inside a git repository");
+        }
+    };
 
-    // Check we're in a git repo
-    let _root = git::repo_root().context("must be run inside a git repository")?;
-
-    // Verify diff3 conflict style
-    git::ensure_diff3_conflict_style()?;
+    // Verify diff3 conflict style, optionally setting the global config first.
+    git::ensure_diff3_conflict_style(cli.set_conflict_style)?;
+    let _root = in_repo.expect("repo presence already checked");
 
     // Get file list
     let files_to_process: Vec<_> = if let Some(ref path) = cli.merge_file {
