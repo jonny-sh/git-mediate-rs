@@ -5,6 +5,7 @@ edition = "2024"
 description = "Automatically resolve trivial git merge conflicts"
 
 [dependencies]
+similar = "3"
 colored = "3"
 thiserror = "2"
 clap = { version = "4", features = ["derive"] }

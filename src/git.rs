@@ -109,6 +109,46 @@ pub fn stage_file(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Set `merge.conflictstyle` to `diff3`.
+pub fn set_conflict_style() -> Result<()> {
+    let output = Command::new("git")
+        .args(["config", "merge.conflictstyle", "diff3"])
+        .output()
+        .context("failed to run git config")?;
+    if !output.status.success() {
+        bail!(
+            "failed to set merge.conflictstyle: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+/// Open the user's editor at a specific file and line.
+pub fn open_editor(path: &Path, line: usize) -> Result<()> {
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+
+    let status = if editor.contains("code") {
+        // VS Code uses --goto file:line
+        Command::new(&editor)
+            .arg("--goto")
+            .arg(format!("{}:{}", path.display(), line))
+            .status()
+    } else {
+        // Most editors use +line file
+        Command::new(&editor)
+            .arg(format!("+{}", line))
+            .arg(path)
+            .status()
+    };
+
+    match status {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => bail!("editor exited with status {}", s),
+        Err(e) => bail!("failed to launch editor '{}': {}", editor, e),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
