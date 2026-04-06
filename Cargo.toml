@@ -5,7 +5,6 @@ edition = "2024"
 description = "Automatically resolve trivial git merge conflicts"
 
 [dependencies]
-similar = "2"
 colored = "3"
 thiserror = "2"
 clap = { version = "4", features = ["derive"] }
@@ -18,3 +17,6 @@ path = "src/main.rs"
 [lib]
 name = "git_mediate"
 path = "src/lib.rs"
+
+[dev-dependencies]
+tempfile = "3"
