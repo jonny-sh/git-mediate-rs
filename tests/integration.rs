@@ -376,12 +376,10 @@ tail
 
     let rewritten = fs::read_to_string(&file_path).unwrap();
     assert_ne!(rewritten, original, "reduced conflict should be written back");
-    assert!(!rewritten.contains("common\nours\ntail"));
-    assert!(!rewritten.contains("common\nbase\ntail"));
-    assert!(!rewritten.contains("common\ntheirs\ntail"));
-    assert!(rewritten.contains("<<<<<<< HEAD\nours"));
-    assert!(rewritten.contains("||||||| ancestor\nbase"));
-    assert!(rewritten.contains("=======\ntheirs"));
+    assert_eq!(
+        rewritten,
+        "common\n<<<<<<< HEAD\nours\n||||||| ancestor\nbase\n=======\ntheirs\n>>>>>>> branch\ntail\n"
+    );
 }
 
 #[test]
@@ -485,4 +483,65 @@ fn test_delete_modify_conflict_is_prepared_for_mediation() {
         .output()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&status.stdout).trim(), "UD file.txt");
+}
+
+#[test]
+fn test_git_mediate_options_env_is_applied() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("file.txt");
+
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(dir.path())
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+
+    git(&["init"]);
+    git(&["config", "merge.conflictstyle", "diff3"]);
+
+    fs::write(
+        &file_path,
+        "\
+<<<<<<< HEAD
+        foo
+        bar
+||||||| base
+    foo
+    bar
+=======
+    foo
+    baz
+>>>>>>> branch
+",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-mediate"))
+        .args(["--merge-file", "file.txt"])
+        .current_dir(dir.path())
+        .env("GIT_MEDIATE_OPTIONS", "--indentation")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "git-mediate failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&file_path).unwrap(),
+        "        foo\n        baz\n"
+    );
 }

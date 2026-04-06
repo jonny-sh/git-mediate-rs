@@ -3,14 +3,101 @@ use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Args, Parser};
 use colored::Colorize;
 
 use git_mediate::diff;
 use git_mediate::git;
 use git_mediate::parse::{chunks_to_string, parse_conflicts};
-use git_mediate::resolve::resolve_chunks;
+use git_mediate::resolve::{ResolveOptions, resolve_chunks_with_options};
 use git_mediate::types::{Chunk, FileResult, UnmergedStatus};
+
+#[derive(Debug, Clone, Args, Default)]
+struct ResolutionCliArgs {
+    /// Number of context lines around dumped diffs
+    #[arg(short = 'U', long = "context")]
+    context: Option<usize>,
+
+    /// Convert tabs to spaces at the given tab size before resolving
+    #[arg(long = "untabify")]
+    untabify: Option<usize>,
+
+    #[arg(long = "trivial")]
+    trivial: bool,
+    #[arg(long = "no-trivial")]
+    no_trivial: bool,
+
+    #[arg(long = "reduce")]
+    reduce: bool,
+    #[arg(long = "no-reduce")]
+    no_reduce: bool,
+
+    #[arg(long = "line-endings")]
+    line_endings: bool,
+    #[arg(long = "no-line-endings")]
+    no_line_endings: bool,
+
+    #[arg(long = "lines-added-around")]
+    lines_added_around: bool,
+
+    #[arg(long = "split-markers")]
+    split_markers: bool,
+    #[arg(long = "no-split-markers")]
+    no_split_markers: bool,
+
+    #[arg(long = "indentation")]
+    indentation: bool,
+    #[arg(long = "no-indentation")]
+    no_indentation: bool,
+}
+
+impl ResolutionCliArgs {
+    fn apply(&self, mut options: ResolveOptions) -> ResolveOptions {
+        if self.trivial {
+            options.trivial = true;
+        }
+        if self.no_trivial {
+            options.trivial = false;
+        }
+        if self.reduce {
+            options.reduce = true;
+        }
+        if self.no_reduce {
+            options.reduce = false;
+        }
+        if let Some(tabsize) = self.untabify {
+            options.untabify = Some(tabsize);
+        }
+        if self.line_endings {
+            options.line_endings = true;
+        }
+        if self.no_line_endings {
+            options.line_endings = false;
+        }
+        if self.lines_added_around {
+            options.lines_added_around = true;
+        }
+        if self.split_markers {
+            options.split_markers = true;
+        }
+        if self.no_split_markers {
+            options.split_markers = false;
+        }
+        if self.indentation {
+            options.indentation = true;
+        }
+        if self.no_indentation {
+            options.indentation = false;
+        }
+        options
+    }
+}
+
+#[derive(Parser, Default)]
+struct EnvArgs {
+    #[command(flatten)]
+    resolution: ResolutionCliArgs,
+}
 
 #[derive(Parser)]
 #[command(
@@ -58,6 +145,9 @@ struct Cli {
     /// Be verbose about what's happening
     #[arg(short, long)]
     verbose: bool,
+
+    #[command(flatten)]
+    resolution: ResolutionCliArgs,
 }
 
 impl Cli {
@@ -74,7 +164,14 @@ impl Cli {
 }
 
 fn main() -> Result<()> {
+    let env_args = parse_env_args();
     let cli = Cli::parse();
+    let resolve_options = cli.resolution.apply(env_args.resolution.apply(ResolveOptions::default()));
+    let diff_context = cli
+        .resolution
+        .context
+        .or(env_args.resolution.context)
+        .unwrap_or(3);
 
     if cli.no_color {
         colored::control::set_override(false);
@@ -146,19 +243,20 @@ fn main() -> Result<()> {
             })?;
         }
 
-        let (result, remaining_conflicts, had_conflicts) = process_file(path, &cli)?;
+        let (result, remaining_conflicts, had_conflicts) =
+            process_file(path, &cli, &resolve_options)?;
         print_file_result(path_str, &result);
 
         // Show diffs for remaining conflicts
         if !remaining_conflicts.is_empty() {
             if cli.show_diff {
                 for conflict in &remaining_conflicts {
-                    print!("{}", diff::show_side_diffs(conflict, use_color));
+                    print!("{}", diff::show_side_diffs(conflict, use_color, diff_context));
                 }
             }
             if cli.show_diff2 {
                 for conflict in &remaining_conflicts {
-                    print!("{}", diff::show_diff2(conflict, use_color));
+                    print!("{}", diff::show_diff2(conflict, use_color, diff_context));
                 }
             }
         }
@@ -205,6 +303,7 @@ fn main() -> Result<()> {
 fn process_file(
     path: &Path,
     cli: &Cli,
+    resolve_options: &ResolveOptions,
 ) -> Result<(FileResult, Vec<git_mediate::types::Conflict>, bool)> {
     let content =
         fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
@@ -225,7 +324,7 @@ fn process_file(
     };
     let had_conflicts = chunks.iter().any(|chunk| matches!(chunk, Chunk::Conflict(_)));
 
-    let (resolved_chunks, stats) = resolve_chunks(chunks);
+    let (resolved_chunks, stats) = resolve_chunks_with_options(chunks, resolve_options);
 
     // Collect remaining conflicts for diff display / editor
     let remaining: Vec<_> = resolved_chunks
@@ -243,6 +342,23 @@ fn process_file(
     }
 
     Ok((stats, remaining, had_conflicts))
+}
+
+fn parse_env_args() -> EnvArgs {
+    let Ok(raw) = std::env::var("GIT_MEDIATE_OPTIONS") else {
+        return EnvArgs::default();
+    };
+
+    let mut args = vec!["git-mediate".to_string()];
+    args.extend(raw.split_whitespace().map(ToOwned::to_owned));
+
+    match EnvArgs::try_parse_from(args) {
+        Ok(env_args) => env_args,
+        Err(err) => {
+            eprintln!("warning: failed to parse GIT_MEDIATE_OPTIONS: {err}");
+            EnvArgs::default()
+        }
+    }
 }
 
 /// Write content to a file atomically: write to a temp file in the same
