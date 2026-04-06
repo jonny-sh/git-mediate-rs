@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -12,7 +13,7 @@ use git_mediate::resolve::resolve_chunks;
 use git_mediate::types::{Chunk, FileResult, UnmergedStatus};
 
 #[derive(Parser)]
-#[command(name = "git-mediate", about = "Automatically resolve trivial git merge conflicts")]
+#[command(name = "git-mediate", version, about = "Automatically resolve trivial git merge conflicts")]
 struct Cli {
     /// Open $EDITOR on files with remaining conflicts
     #[arg(short = 'e', long = "editor")]
@@ -214,11 +215,24 @@ fn process_file(
 
     if stats.resolved > 0 && !cli.dry_run {
         let new_content = chunks_to_string(&resolved_chunks);
-        fs::write(path, &new_content)
+        atomic_write(path, new_content.as_bytes())
             .with_context(|| format!("failed to write {}", path.display()))?;
     }
 
     Ok((stats, remaining))
+}
+
+/// Write content to a file atomically: write to a temp file in the same
+/// directory, then rename over the target.
+fn atomic_write(path: &Path, content: &[u8]) -> Result<()> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let mut tmp = tempfile::NamedTempFile::new_in(dir)
+        .context("failed to create temp file")?;
+    tmp.write_all(content)
+        .context("failed to write temp file")?;
+    tmp.persist(path)
+        .context("failed to rename temp file")?;
+    Ok(())
 }
 
 fn print_file_result(path: &str, result: &FileResult) {
