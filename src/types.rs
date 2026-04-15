@@ -1,45 +1,132 @@
+use std::ops::Deref;
+
+/// A typed wrapper around the lines contained in one side of a conflict.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ConflictBody(Vec<String>);
+
+impl ConflictBody {
+    pub fn new(lines: Vec<String>) -> Self {
+        Self(lines)
+    }
+
+    pub fn lines(&self) -> &[String] {
+        &self.0
+    }
+
+    pub fn into_lines(self) -> Vec<String> {
+        self.0
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn push(&mut self, line: String) {
+        self.0.push(line);
+    }
+
+    pub fn extend<I>(&mut self, lines: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.0.extend(lines);
+    }
+}
+
+impl From<Vec<String>> for ConflictBody {
+    fn from(lines: Vec<String>) -> Self {
+        Self::new(lines)
+    }
+}
+
+impl FromIterator<String> for ConflictBody {
+    fn from_iter<T: IntoIterator<Item = String>>(iter: T) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
+
+impl IntoIterator for ConflictBody {
+    type Item = String;
+    type IntoIter = std::vec::IntoIter<String>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a ConflictBody {
+    type Item = &'a String;
+    type IntoIter = std::slice::Iter<'a, String>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl AsRef<[String]> for ConflictBody {
+    fn as_ref(&self) -> &[String] {
+        self.lines()
+    }
+}
+
+impl Deref for ConflictBody {
+    type Target = [String];
+
+    fn deref(&self) -> &Self::Target {
+        self.lines()
+    }
+}
+
 /// A three-sided container representing (ours, base, theirs) in a merge conflict.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Sides<T> {
-    pub a: T,
+pub struct ConflictSides<T> {
+    pub ours: T,
     pub base: T,
-    pub b: T,
+    pub theirs: T,
 }
 
-impl<T> Sides<T> {
-    pub fn new(a: T, base: T, b: T) -> Self {
-        Self { a, base, b }
+impl<T> ConflictSides<T> {
+    pub fn new(ours: T, base: T, theirs: T) -> Self {
+        Self { ours, base, theirs }
     }
 
-    pub fn map<U>(self, f: impl Fn(T) -> U) -> Sides<U> {
-        Sides {
-            a: f(self.a),
+    pub fn map<U>(self, f: impl Fn(T) -> U) -> ConflictSides<U> {
+        ConflictSides {
+            ours: f(self.ours),
             base: f(self.base),
-            b: f(self.b),
+            theirs: f(self.theirs),
         }
     }
 
-    pub fn as_ref(&self) -> Sides<&T> {
-        Sides {
-            a: &self.a,
+    pub fn as_ref(&self) -> ConflictSides<&T> {
+        ConflictSides {
+            ours: &self.ours,
             base: &self.base,
-            b: &self.b,
+            theirs: &self.theirs,
         }
     }
 
-    pub fn zip_with<U, V>(self, other: Sides<U>, f: impl Fn(T, U) -> V) -> Sides<V> {
-        Sides {
-            a: f(self.a, other.a),
+    pub fn zip_with<U, V>(
+        self,
+        other: ConflictSides<U>,
+        f: impl Fn(T, U) -> V,
+    ) -> ConflictSides<V> {
+        ConflictSides {
+            ours: f(self.ours, other.ours),
             base: f(self.base, other.base),
-            b: f(self.b, other.b),
+            theirs: f(self.theirs, other.theirs),
         }
     }
 }
 
-impl<T: PartialEq> Sides<T> {
+impl<T: PartialEq> ConflictSides<T> {
     /// Returns true if all three sides are equal.
     pub fn all_equal(&self) -> bool {
-        self.a == self.base && self.base == self.b
+        self.ours == self.base && self.base == self.theirs
     }
 }
 
@@ -56,54 +143,64 @@ impl SrcContent {
     }
 }
 
+/// The four marker lines that bound a diff3 merge conflict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConflictMarkers {
+    pub ours: SrcContent,
+    pub base: SrcContent,
+    pub separator: SrcContent,
+    pub theirs: SrcContent,
+}
+
+impl ConflictMarkers {
+    pub fn new(
+        ours: SrcContent,
+        base: SrcContent,
+        separator: SrcContent,
+        theirs: SrcContent,
+    ) -> Self {
+        Self {
+            ours,
+            base,
+            separator,
+            theirs,
+        }
+    }
+}
+
 /// A single merge conflict with markers and three-sided content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Conflict {
-    /// The `<<<<<<<` marker line
-    pub marker_a: SrcContent,
-    /// The `|||||||` marker line
-    pub marker_base: SrcContent,
-    /// The `=======` marker line
-    pub marker_b: SrcContent,
-    /// The `>>>>>>>` marker line
-    pub marker_end: SrcContent,
-    /// The content lines for each side (ours, base, theirs)
-    pub bodies: Sides<Vec<String>>,
+    pub markers: ConflictMarkers,
+    pub bodies: ConflictSides<ConflictBody>,
 }
 
 impl Conflict {
     /// Returns the line number of the first marker (`<<<<<<<`).
     pub fn start_line(&self) -> usize {
-        self.marker_a.line_number
+        self.markers.ours.line_number
     }
 
     /// Returns the line number of the last marker (`>>>>>>>`).
     pub fn end_line(&self) -> usize {
-        self.marker_end.line_number
+        self.markers.theirs.line_number
+    }
+
+    pub fn to_conflict_lines(&self) -> ConflictBody {
+        let mut out = Vec::new();
+        out.push(self.markers.ours.text.clone());
+        out.extend(self.bodies.ours.lines().iter().cloned());
+        out.push(self.markers.base.text.clone());
+        out.extend(self.bodies.base.lines().iter().cloned());
+        out.push(self.markers.separator.text.clone());
+        out.extend(self.bodies.theirs.lines().iter().cloned());
+        out.push(self.markers.theirs.text.clone());
+        ConflictBody::from(out)
     }
 
     /// Reconstructs the full conflict text with markers.
     pub fn to_conflict_text(&self) -> String {
-        let mut out = String::new();
-        out.push_str(&self.marker_a.text);
-        out.push('\n');
-        for line in &self.bodies.a {
-            out.push_str(line);
-            out.push('\n');
-        }
-        out.push_str(&self.marker_base.text);
-        out.push('\n');
-        for line in &self.bodies.base {
-            out.push_str(line);
-            out.push('\n');
-        }
-        out.push_str(&self.marker_b.text);
-        out.push('\n');
-        for line in &self.bodies.b {
-            out.push_str(line);
-            out.push('\n');
-        }
-        out.push_str(&self.marker_end.text);
+        let mut out = self.to_conflict_lines().lines().join("\n");
         out.push('\n');
         out
     }
@@ -163,4 +260,52 @@ pub enum UnmergedStatus {
 pub struct UnmergedFile {
     pub status: UnmergedStatus,
     pub path: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn body(lines: &[&str]) -> ConflictBody {
+        ConflictBody::from(
+            lines
+                .iter()
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    #[test]
+    fn test_conflict_text_roundtrip_uses_renamed_markers() {
+        let conflict = Conflict {
+            markers: ConflictMarkers::new(
+                SrcContent::new(12, "<<<<<<< HEAD".to_string()),
+                SrcContent::new(15, "||||||| ancestor".to_string()),
+                SrcContent::new(18, "=======".to_string()),
+                SrcContent::new(21, ">>>>>>> branch".to_string()),
+            ),
+            bodies: ConflictSides::new(body(&["ours"]), body(&["base"]), body(&["theirs"])),
+        };
+
+        assert_eq!(
+            conflict.to_conflict_text(),
+            "<<<<<<< HEAD\nours\n||||||| ancestor\nbase\n=======\ntheirs\n>>>>>>> branch\n"
+        );
+    }
+
+    #[test]
+    fn test_conflict_line_numbers_use_conflict_markers() {
+        let conflict = Conflict {
+            markers: ConflictMarkers::new(
+                SrcContent::new(7, "<<<<<<< HEAD".to_string()),
+                SrcContent::new(10, "||||||| ancestor".to_string()),
+                SrcContent::new(13, "=======".to_string()),
+                SrcContent::new(15, ">>>>>>> branch".to_string()),
+            ),
+            bodies: ConflictSides::new(body(&[]), body(&[]), body(&[])),
+        };
+
+        assert_eq!(conflict.start_line(), 7);
+        assert_eq!(conflict.end_line(), 15);
+    }
 }

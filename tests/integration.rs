@@ -285,14 +285,20 @@ fn test_set_conflict_style_continues_processing() {
         .env("HOME", home.path())
         .output()
         .unwrap();
-    assert_eq!(String::from_utf8_lossy(&global_style.stdout).trim(), "diff3");
+    assert_eq!(
+        String::from_utf8_lossy(&global_style.stdout).trim(),
+        "diff3"
+    );
 
     let status = Command::new("git")
         .args(["status", "--porcelain"])
         .current_dir(dir.path())
         .output()
         .unwrap();
-    assert_eq!(String::from_utf8_lossy(&status.stdout).trim(), "M  file.txt");
+    assert_eq!(
+        String::from_utf8_lossy(&status.stdout).trim(),
+        "M  file.txt"
+    );
 }
 
 #[test]
@@ -375,7 +381,10 @@ tail
     );
 
     let rewritten = fs::read_to_string(&file_path).unwrap();
-    assert_ne!(rewritten, original, "reduced conflict should be written back");
+    assert_ne!(
+        rewritten, original,
+        "reduced conflict should be written back"
+    );
     assert_eq!(
         rewritten,
         "common\n<<<<<<< HEAD\nours\n||||||| ancestor\nbase\n=======\ntheirs\n>>>>>>> branch\ntail\n"
@@ -410,7 +419,10 @@ fn test_manually_resolved_file_gets_staged() {
         "git status failed: {}",
         String::from_utf8_lossy(&status.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&status.stdout).trim(), "M  file.txt");
+    assert_eq!(
+        String::from_utf8_lossy(&status.stdout).trim(),
+        "M  file.txt"
+    );
 }
 
 #[test]
@@ -482,7 +494,10 @@ fn test_delete_modify_conflict_is_prepared_for_mediation() {
         .current_dir(p)
         .output()
         .unwrap();
-    assert_eq!(String::from_utf8_lossy(&status.stdout).trim(), "UD file.txt");
+    assert_eq!(
+        String::from_utf8_lossy(&status.stdout).trim(),
+        "UD file.txt"
+    );
 }
 
 #[test]

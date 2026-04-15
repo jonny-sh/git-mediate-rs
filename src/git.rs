@@ -83,7 +83,9 @@ fn current_conflict_style() -> Result<Option<String>> {
         .context("failed to run git config")?;
 
     if output.status.success() {
-        return Ok(Some(String::from_utf8_lossy(&output.stdout).trim().to_string()));
+        return Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        ));
     }
 
     if output.status.code() == Some(1) {
@@ -155,8 +157,8 @@ pub fn stage_file(path: &Path) -> Result<()> {
 }
 
 pub fn prepare_delete_modify_conflict(path: &Path) -> Result<()> {
-    let current =
-        std::fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let current = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
     if current.lines().any(|line| line.starts_with("<<<<<<<")) {
         return Ok(());
     }
@@ -178,8 +180,8 @@ pub fn prepare_delete_modify_conflict(path: &Path) -> Result<()> {
 }
 
 pub fn remove_file_if_empty(path: &Path) -> Result<bool> {
-    let content =
-        std::fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
     if !content.is_empty() {
         return Ok(false);
     }
