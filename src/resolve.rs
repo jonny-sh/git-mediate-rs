@@ -457,7 +457,8 @@ fn common_prefix_len(left: &[String], right: &[String]) -> usize {
 
 fn take_middle(lines: &[String], match_top: usize, match_bottom: usize) -> Vec<String> {
     let end = lines.len().saturating_sub(match_bottom);
-    lines[match_top..end].to_vec()
+    let start = match_top.min(end);
+    lines[start..end].to_vec()
 }
 
 fn split_conflict(conflict: &Conflict) -> Vec<Conflict> {
@@ -571,6 +572,28 @@ tail
         assert_eq!(
             chunks_to_string(&resolved),
             "common\n<<<<<<< HEAD\nours\n||||||| ancestor\nbase\n=======\ntheirs\n>>>>>>> branch\ntail\n"
+        );
+    }
+
+    #[test]
+    fn test_partial_reduction_handles_empty_base_body() {
+        let input = "\
+<<<<<<< HEAD
+shared
+ours
+||||||| ancestor
+=======
+shared
+theirs
+>>>>>>> branch
+";
+        let chunks = parse_conflicts(input).unwrap();
+        let (resolved, stats) = resolve_chunks(chunks);
+
+        assert_eq!(stats.partially_resolved, 1);
+        assert_eq!(
+            chunks_to_string(&resolved),
+            "shared\n<<<<<<< HEAD\nours\n||||||| ancestor\n=======\ntheirs\n>>>>>>> branch\n"
         );
     }
 
