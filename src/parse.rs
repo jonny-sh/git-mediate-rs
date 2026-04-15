@@ -1,4 +1,4 @@
-use crate::types::{Chunk, Conflict, Sides, SrcContent};
+use crate::types::{Chunk, Conflict, ConflictBody, ConflictMarkers, ConflictSides, SrcContent};
 
 const MARKER_OURS: &str = "<<<<<<<";
 const MARKER_BASE: &str = "|||||||";
@@ -35,23 +35,21 @@ pub fn parse_conflicts(content: &str) -> Result<Vec<Chunk>, ParseError> {
         if lines[i].starts_with(MARKER_OURS) {
             found_any_conflict = true;
 
-            // Flush accumulated plain text
             if i > plain_start {
                 let plain = lines[plain_start..i].join("\n");
                 chunks.push(Chunk::Plain(plain + "\n"));
             }
 
-            let marker_a = SrcContent::new(i + 1, lines[i].to_string());
+            let ours_marker = SrcContent::new(i + 1, lines[i].to_string());
             let conflict_start = i;
             i += 1;
 
-            // Collect side A lines until ||||||| or =======
-            let mut body_a = Vec::new();
+            let mut ours_body = Vec::new();
             while i < lines.len()
                 && !lines[i].starts_with(MARKER_BASE)
                 && !lines[i].starts_with(MARKER_SEP)
             {
-                body_a.push(lines[i].to_string());
+                ours_body.push(lines[i].to_string());
                 i += 1;
             }
 
@@ -62,8 +60,7 @@ pub fn parse_conflicts(content: &str) -> Result<Vec<Chunk>, ParseError> {
                 });
             }
 
-            // Parse base marker (optional — if missing, base is empty)
-            let (marker_base, body_base) = if lines[i].starts_with(MARKER_BASE) {
+            let (base_marker, base_body) = if lines[i].starts_with(MARKER_BASE) {
                 let marker = SrcContent::new(i + 1, lines[i].to_string());
                 i += 1;
 
@@ -74,7 +71,6 @@ pub fn parse_conflicts(content: &str) -> Result<Vec<Chunk>, ParseError> {
                 }
                 (marker, body)
             } else {
-                // No diff3 base marker — synthesize an empty base
                 has_base_marker = false;
                 let marker = SrcContent::new(i + 1, format!("{MARKER_BASE} (no base)"));
                 (marker, Vec::new())
@@ -87,14 +83,12 @@ pub fn parse_conflicts(content: &str) -> Result<Vec<Chunk>, ParseError> {
                 });
             }
 
-            // Parse separator (=======)
-            let marker_b = SrcContent::new(i + 1, lines[i].to_string());
+            let separator_marker = SrcContent::new(i + 1, lines[i].to_string());
             i += 1;
 
-            // Collect side B lines until >>>>>>>
-            let mut body_b = Vec::new();
+            let mut theirs_body = Vec::new();
             while i < lines.len() && !lines[i].starts_with(MARKER_THEIRS) {
-                body_b.push(lines[i].to_string());
+                theirs_body.push(lines[i].to_string());
                 i += 1;
             }
 
@@ -105,15 +99,21 @@ pub fn parse_conflicts(content: &str) -> Result<Vec<Chunk>, ParseError> {
                 });
             }
 
-            let marker_end = SrcContent::new(i + 1, lines[i].to_string());
+            let theirs_marker = SrcContent::new(i + 1, lines[i].to_string());
             i += 1;
 
             chunks.push(Chunk::Conflict(Conflict {
-                marker_a,
-                marker_base,
-                marker_b,
-                marker_end,
-                bodies: Sides::new(body_a, body_base, body_b),
+                markers: ConflictMarkers::new(
+                    ours_marker,
+                    base_marker,
+                    separator_marker,
+                    theirs_marker,
+                ),
+                bodies: ConflictSides::new(
+                    ConflictBody::from(ours_body),
+                    ConflictBody::from(base_body),
+                    ConflictBody::from(theirs_body),
+                ),
             }));
 
             plain_start = i;
@@ -122,18 +122,14 @@ pub fn parse_conflicts(content: &str) -> Result<Vec<Chunk>, ParseError> {
         }
     }
 
-    // Flush trailing plain text
     if plain_start < lines.len() {
         let plain = lines[plain_start..].join("\n");
-        // Preserve trailing newline if original content had one
         if content.ends_with('\n') {
             chunks.push(Chunk::Plain(plain + "\n"));
         } else {
             chunks.push(Chunk::Plain(plain));
         }
     } else if plain_start == lines.len() && content.ends_with('\n') && !chunks.is_empty() {
-        // Content ended exactly at the end of a conflict marker line,
-        // but the original file had a trailing newline — nothing extra to add
     }
 
     if found_any_conflict && !has_base_marker {
@@ -159,6 +155,10 @@ pub fn chunks_to_string(chunks: &[Chunk]) -> String {
 mod tests {
     use super::*;
 
+    fn lines(body: &ConflictBody) -> Vec<&str> {
+        body.lines().iter().map(String::as_str).collect()
+    }
+
     #[test]
     fn test_parse_simple_conflict() {
         let input = "\
@@ -182,9 +182,9 @@ after
 
         match &chunks[1] {
             Chunk::Conflict(c) => {
-                assert_eq!(c.bodies.a, vec!["ours"]);
-                assert_eq!(c.bodies.base, vec!["original"]);
-                assert_eq!(c.bodies.b, vec!["theirs"]);
+                assert_eq!(lines(&c.bodies.ours), vec!["ours"]);
+                assert_eq!(lines(&c.bodies.base), vec!["original"]);
+                assert_eq!(lines(&c.bodies.theirs), vec!["theirs"]);
                 assert_eq!(c.start_line(), 2);
                 assert_eq!(c.end_line(), 8);
             }
@@ -251,9 +251,9 @@ original line
 
         match &chunks[0] {
             Chunk::Conflict(c) => {
-                assert!(c.bodies.a.is_empty());
-                assert_eq!(c.bodies.base, vec!["original line"]);
-                assert!(c.bodies.b.is_empty());
+                assert!(c.bodies.ours.is_empty());
+                assert_eq!(lines(&c.bodies.base), vec!["original line"]);
+                assert!(c.bodies.theirs.is_empty());
             }
             other => panic!("expected Conflict, got {:?}", other),
         }
@@ -276,9 +276,9 @@ line 1c
         let chunks = parse_conflicts(input).unwrap();
         match &chunks[0] {
             Chunk::Conflict(c) => {
-                assert_eq!(c.bodies.a, vec!["line 1a", "line 2a", "line 3a"]);
-                assert_eq!(c.bodies.base, vec!["line 1b", "line 2b"]);
-                assert_eq!(c.bodies.b, vec!["line 1c"]);
+                assert_eq!(lines(&c.bodies.ours), vec!["line 1a", "line 2a", "line 3a"]);
+                assert_eq!(lines(&c.bodies.base), vec!["line 1b", "line 2b"]);
+                assert_eq!(lines(&c.bodies.theirs), vec!["line 1c"]);
             }
             other => panic!("expected Conflict, got {:?}", other),
         }
@@ -328,7 +328,10 @@ ours
 original
 ";
         let result = parse_conflicts(input);
-        assert!(matches!(result, Err(ParseError::UnterminatedConflict { .. })));
+        assert!(matches!(
+            result,
+            Err(ParseError::UnterminatedConflict { .. })
+        ));
     }
 
     #[test]

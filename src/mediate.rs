@@ -208,12 +208,7 @@ impl GitMediateBuilder {
             if self.editor && !file_outcome.remaining_conflicts.is_empty() {
                 let first_line = file_outcome.remaining_conflicts[0].start_line();
                 if let Err(err) = git::open_editor(path, first_line) {
-                    report.push_line(format!(
-                        "{} {}: {}",
-                        "warning:".yellow(),
-                        path_str,
-                        err
-                    ));
+                    report.push_line(format!("{} {}: {}", "warning:".yellow(), path_str, err));
                 }
             }
 
@@ -227,9 +222,13 @@ impl GitMediateBuilder {
         report.dry_run = self.dry_run;
         report.no_add = self.no_add;
 
-        if let Some(summary) =
-            summary_line(&total, files_fully_resolved, self.dry_run, self.no_add, use_color)
-        {
+        if let Some(summary) = summary_line(
+            &total,
+            files_fully_resolved,
+            self.dry_run,
+            self.no_add,
+            use_color,
+        ) {
             if !report.output.is_empty() {
                 report.push_raw("\n");
             }
@@ -345,7 +344,9 @@ fn process_file(path: &Path, options: &GitMediateBuilder) -> Result<FileOutcome>
             });
         }
     };
-    let had_conflicts = chunks.iter().any(|chunk| matches!(chunk, Chunk::Conflict(_)));
+    let had_conflicts = chunks
+        .iter()
+        .any(|chunk| matches!(chunk, Chunk::Conflict(_)));
     let (resolved_chunks, result) = resolve_chunks_with_options(chunks, &options.resolve_options);
 
     let remaining_conflicts = resolved_chunks
@@ -386,7 +387,11 @@ fn file_result_line(path: &str, result: &FileResult, color: bool) -> Option<Stri
 
     let mut parts = Vec::new();
     if result.resolved > 0 {
-        parts.push(colorize(format!("{} resolved", result.resolved), "green", color));
+        parts.push(colorize(
+            format!("{} resolved", result.resolved),
+            "green",
+            color,
+        ));
     }
     if result.partially_resolved > 0 {
         parts.push(colorize(
@@ -396,7 +401,11 @@ fn file_result_line(path: &str, result: &FileResult, color: bool) -> Option<Stri
         ));
     }
     if result.failed > 0 {
-        parts.push(colorize(format!("{} remaining", result.failed), "red", color));
+        parts.push(colorize(
+            format!("{} remaining", result.failed),
+            "red",
+            color,
+        ));
     }
 
     let status = if result.is_fully_resolved() {
@@ -527,6 +536,9 @@ mod tests {
             .unwrap();
         assert!(report.is_success());
         assert_eq!(std::env::current_dir().unwrap(), previous);
-        assert_eq!(std::fs::read_to_string(repo.join("file.txt")).unwrap(), "theirs\n");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("file.txt")).unwrap(),
+            "theirs\n"
+        );
     }
 }
