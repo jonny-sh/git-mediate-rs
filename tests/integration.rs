@@ -656,7 +656,7 @@ fn test_reduce_deleted_resolves_whitespace_only_delete_modify_conflict() {
 }
 
 #[test]
-fn test_internal_common_reduction_is_written_back() {
+fn test_internal_common_reduction_splits_delete_modify_conflicts() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("file.txt");
     let git = |args: &[&str]| {
@@ -714,9 +714,13 @@ base-end
         "\
 <<<<<<< HEAD
 ours-start
-ours-end
 ||||||| base
 base-start
+=======
+>>>>>>> branch
+<<<<<<< HEAD
+ours-end
+||||||| base
 base-end
 =======
 >>>>>>> branch

@@ -26,65 +26,14 @@ pub(super) fn reduce_internal_common(conflict: &Conflict) -> Option<Vec<Chunk>> 
     changed.then_some(reduced)
 }
 
-pub(super) fn reduce_delete_modify_common(conflict: &Conflict) -> Option<Conflict> {
+pub(super) fn reduce_delete_modify_common(conflict: &Conflict) -> Option<Vec<Chunk>> {
     if !conflict.is_delete_modify() {
         return None;
     }
 
-    let mut bodies = conflict.bodies.clone();
-
-    let changed = if bodies.ours.is_empty() {
-        let (base, theirs, removed_common) =
-            without_deleted_common_blocks(bodies.base.lines(), bodies.theirs.lines());
-        bodies.base = ConflictBody::from(base);
-        bodies.theirs = ConflictBody::from(theirs);
-        removed_common
-    } else {
-        let (ours, base, removed_common) =
-            without_deleted_common_blocks(bodies.ours.lines(), bodies.base.lines());
-        bodies.ours = ConflictBody::from(ours);
-        bodies.base = ConflictBody::from(base);
-        removed_common
-    };
-
-    changed.then(|| conflict.with_bodies(bodies))
-}
-
-fn without_deleted_common_blocks(
-    left: &[String],
-    right: &[String],
-) -> (Vec<String>, Vec<String>, bool) {
-    without_common_blocks_by(left, right, |left, right| {
-        whitespace_key(left) == whitespace_key(right)
-    })
-}
-
-fn whitespace_key(line: &str) -> String {
-    line.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn without_common_blocks_by(
-    left: &[String],
-    right: &[String],
-    is_common: impl Fn(&str, &str) -> bool + Copy,
-) -> (Vec<String>, Vec<String>, bool) {
-    let Some((left_start, right_start, len)) =
-        longest_common_contiguous_block_by(left, right, is_common)
-    else {
-        return (left.to_vec(), right.to_vec(), false);
-    };
-
-    let (mut left_before, mut right_before, _) =
-        without_common_blocks_by(&left[..left_start], &right[..right_start], is_common);
-    let (left_after, right_after, _) = without_common_blocks_by(
-        &left[left_start + len..],
-        &right[right_start + len..],
-        is_common,
-    );
-
-    left_before.extend(left_after);
-    right_before.extend(right_after);
-    (left_before, right_before, true)
+    let reduced = delete_modify_common_reduction(conflict);
+    let changed = !matches!(reduced.as_slice(), [Chunk::Conflict(reduced)] if reduced == conflict);
+    changed.then_some(reduced)
 }
 
 fn internal_common_reduction(conflict: &Conflict) -> Vec<Chunk> {
@@ -103,6 +52,26 @@ fn internal_common_reduction(conflict: &Conflict) -> Vec<Chunk> {
     push_plain_chunk(&mut chunks, common.to_text());
     if !after.all_empty() {
         chunks.extend(internal_common_reduction(&conflict.with_bodies(after)));
+    }
+    chunks
+}
+
+fn delete_modify_common_reduction(conflict: &Conflict) -> Vec<Chunk> {
+    let Some(block) = find_deleted_common_block(conflict) else {
+        return vec![Chunk::Conflict(conflict.clone())];
+    };
+
+    let before = split_bodies(conflict, block, Segment::Before);
+    let after = split_bodies(conflict, block, Segment::After);
+
+    let mut chunks = Vec::new();
+    if !before.all_empty() {
+        chunks.extend(delete_modify_common_reduction(
+            &conflict.with_bodies(before),
+        ));
+    }
+    if !after.all_empty() {
+        chunks.extend(delete_modify_common_reduction(&conflict.with_bodies(after)));
     }
     chunks
 }
@@ -148,11 +117,58 @@ fn find_internal_common_block(conflict: &Conflict) -> Option<CommonBlock> {
     })
 }
 
+fn find_deleted_common_block(conflict: &Conflict) -> Option<CommonBlock> {
+    if conflict.bodies.ours.is_empty() {
+        find_common_block_between(
+            Side::Base,
+            &conflict.bodies.base,
+            Side::Theirs,
+            &conflict.bodies.theirs,
+            whitespace_equivalent,
+        )
+    } else {
+        find_common_block_between(
+            Side::Ours,
+            &conflict.bodies.ours,
+            Side::Base,
+            &conflict.bodies.base,
+            whitespace_equivalent,
+        )
+    }
+}
+
 fn longest_common_contiguous_block(
     left: &[String],
     right: &[String],
 ) -> Option<(usize, usize, usize)> {
     longest_common_contiguous_block_by(left, right, |left, right| left == right)
+}
+
+fn find_common_block_between(
+    left: Side,
+    left_body: &ConflictBody,
+    right: Side,
+    right_body: &ConflictBody,
+    is_common: impl Fn(&str, &str) -> bool,
+) -> Option<CommonBlock> {
+    let (left_start, right_start, len) =
+        longest_common_contiguous_block_by(left_body.lines(), right_body.lines(), is_common)?;
+
+    Some(CommonBlock {
+        left,
+        left_start,
+        right,
+        right_start,
+        len,
+    })
+}
+
+fn whitespace_equivalent(left: &str, right: &str) -> bool {
+    whitespace_key(left) == whitespace_key(right)
+}
+
+fn whitespace_key(line: &str) -> String {
+    line.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn longest_common_contiguous_block_by(
