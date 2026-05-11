@@ -3,14 +3,26 @@ use crate::types::{Conflict, ConflictBody, ConflictSides};
 use super::ResolveOptions;
 use super::strategies::resolve_value;
 
-pub(super) fn preprocess_conflict(mut conflict: Conflict, options: &ResolveOptions) -> Conflict {
-    if let Some(tabsize) = options.untabify {
-        conflict = map_conflict_lines(&conflict, |line| untabify_str(line, tabsize));
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PreprocessedConflict(Conflict);
+
+impl PreprocessedConflict {
+    pub(super) fn new(conflict: &Conflict, options: &ResolveOptions) -> Self {
+        let mut conflict = conflict.clone();
+
+        if let Some(tabsize) = options.untabify {
+            conflict = map_conflict_lines(&conflict, |line| untabify_str(line, tabsize));
+        }
+        if options.line_endings {
+            conflict = line_break_fix(&conflict);
+        }
+
+        Self(conflict)
     }
-    if options.line_endings {
-        conflict = line_break_fix(&conflict);
+
+    pub(super) fn as_conflict(&self) -> &Conflict {
+        &self.0
     }
-    conflict
 }
 
 fn map_conflict_lines(conflict: &Conflict, f: impl Fn(&str) -> String) -> Conflict {
