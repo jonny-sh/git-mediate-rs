@@ -17,12 +17,60 @@ struct CommonBlock {
 }
 
 pub(super) fn reduce_internal_common(conflict: &Conflict) -> Option<String> {
+    if is_delete_modify(conflict) {
+        return None;
+    }
+
     let reduced = render_internal_common_reduction(conflict);
     if reduced == conflict.to_conflict_text() {
         None
     } else {
         Some(reduced)
     }
+}
+
+pub(super) fn reduce_delete_modify_common(conflict: &Conflict) -> Option<Conflict> {
+    if !is_delete_modify(conflict) {
+        return None;
+    }
+
+    let mut bodies = conflict.bodies.clone();
+
+    let changed = if bodies.ours.is_empty() {
+        let (base, theirs, removed_common) =
+            without_common_blocks(bodies.base.lines(), bodies.theirs.lines());
+        bodies.base = ConflictBody::from(base);
+        bodies.theirs = ConflictBody::from(theirs);
+        removed_common
+    } else {
+        let (ours, base, removed_common) =
+            without_common_blocks(bodies.ours.lines(), bodies.base.lines());
+        bodies.ours = ConflictBody::from(ours);
+        bodies.base = ConflictBody::from(base);
+        removed_common
+    };
+
+    changed.then(|| conflict.with_bodies(bodies))
+}
+
+fn is_delete_modify(conflict: &Conflict) -> bool {
+    !conflict.bodies.base.is_empty()
+        && (conflict.bodies.ours.is_empty() ^ conflict.bodies.theirs.is_empty())
+}
+
+fn without_common_blocks(left: &[String], right: &[String]) -> (Vec<String>, Vec<String>, bool) {
+    let Some((left_start, right_start, len)) = longest_common_contiguous_block(left, right) else {
+        return (left.to_vec(), right.to_vec(), false);
+    };
+
+    let (mut left_before, mut right_before, _) =
+        without_common_blocks(&left[..left_start], &right[..right_start]);
+    let (left_after, right_after, _) =
+        without_common_blocks(&left[left_start + len..], &right[right_start + len..]);
+
+    left_before.extend(left_after);
+    right_before.extend(right_after);
+    (left_before, right_before, true)
 }
 
 fn render_internal_common_reduction(conflict: &Conflict) -> String {

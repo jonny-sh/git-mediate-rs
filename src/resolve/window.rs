@@ -55,8 +55,8 @@ impl ConflictWindow {
 fn shared_prefix(base: &[String], ours: &[String], theirs: &[String]) -> usize {
     match (ours.is_empty(), base.is_empty(), theirs.is_empty()) {
         (_, true, _) => common_prefix_len(ours, theirs),
-        (true, _, _) => common_prefix_len(base, theirs),
-        (_, _, true) => common_prefix_len(base, ours),
+        (true, _, _) => 0,
+        (_, _, true) => 0,
         _ => common_prefix_len(base, ours).min(common_prefix_len(base, theirs)),
     }
 }
@@ -77,8 +77,8 @@ fn shared_suffix_after_prefix(
         theirs_after_prefix.is_empty(),
     ) {
         (_, true, _) => common_suffix_len(ours_after_prefix, theirs_after_prefix),
-        (true, _, _) => common_suffix_len(base_after_prefix, theirs_after_prefix),
-        (_, _, true) => common_suffix_len(base_after_prefix, ours_after_prefix),
+        (true, _, _) => 0,
+        (_, _, true) => 0,
         _ => common_suffix_len(base_after_prefix, ours_after_prefix)
             .min(common_suffix_len(base_after_prefix, theirs_after_prefix)),
     }
@@ -221,9 +221,9 @@ mod tests {
             &[],
         ));
 
-        assert_eq!(lines(&window.prefix), vec!["shared"]);
-        assert_eq!(lines(&window.core.ours), vec!["ours"]);
-        assert_eq!(lines(&window.core.base), vec!["base"]);
+        assert!(window.prefix.is_empty());
+        assert_eq!(lines(&window.core.ours), vec!["shared", "ours"]);
+        assert_eq!(lines(&window.core.base), vec!["shared", "base"]);
         assert!(window.core.theirs.is_empty());
         assert!(window.suffix.is_empty());
     }
@@ -238,8 +238,8 @@ mod tests {
 
         assert!(window.prefix.is_empty());
         assert!(window.core.ours.is_empty());
-        assert_eq!(lines(&window.core.base), vec!["base"]);
-        assert_eq!(lines(&window.core.theirs), vec!["theirs"]);
-        assert_eq!(lines(&window.suffix), vec!["shared"]);
+        assert_eq!(lines(&window.core.base), vec!["base", "shared"]);
+        assert_eq!(lines(&window.core.theirs), vec!["theirs", "shared"]);
+        assert!(window.suffix.is_empty());
     }
 }
