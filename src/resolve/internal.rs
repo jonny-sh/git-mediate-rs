@@ -1,0 +1,162 @@
+use crate::types::{Conflict, ConflictBody, ConflictSides};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Side {
+    Ours,
+    Base,
+    Theirs,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CommonBlock {
+    left: Side,
+    left_start: usize,
+    right: Side,
+    right_start: usize,
+    len: usize,
+}
+
+pub(super) fn reduce_internal_common(conflict: &Conflict) -> Option<String> {
+    let reduced = render_internal_common_reduction(conflict);
+    if reduced == conflict.to_conflict_text() {
+        None
+    } else {
+        Some(reduced)
+    }
+}
+
+fn render_internal_common_reduction(conflict: &Conflict) -> String {
+    let Some(block) = find_internal_common_block(conflict) else {
+        return conflict.to_conflict_text();
+    };
+
+    let before = split_bodies(conflict, block, Segment::Before);
+    let common = common_body(conflict, block);
+    let after = split_bodies(conflict, block, Segment::After);
+
+    let mut out = String::new();
+    if !all_empty(&before) {
+        out.push_str(&render_internal_common_reduction(
+            &conflict.with_bodies(before),
+        ));
+    }
+    out.push_str(&common.to_text());
+    if !all_empty(&after) {
+        out.push_str(&render_internal_common_reduction(
+            &conflict.with_bodies(after),
+        ));
+    }
+    out
+}
+
+fn all_empty(bodies: &ConflictSides<ConflictBody>) -> bool {
+    bodies.ours.is_empty() && bodies.base.is_empty() && bodies.theirs.is_empty()
+}
+
+fn find_internal_common_block(conflict: &Conflict) -> Option<CommonBlock> {
+    let bodies = [
+        (Side::Ours, &conflict.bodies.ours),
+        (Side::Base, &conflict.bodies.base),
+        (Side::Theirs, &conflict.bodies.theirs),
+    ];
+    let non_empty = bodies
+        .into_iter()
+        .filter(|(_, body)| !body.is_empty())
+        .collect::<Vec<_>>();
+
+    if non_empty.len() != 2 {
+        return None;
+    }
+
+    let (left, left_body) = non_empty[0];
+    let (right, right_body) = non_empty[1];
+    let (left_start, right_start, len) =
+        longest_common_contiguous_block(left_body.lines(), right_body.lines())?;
+
+    Some(CommonBlock {
+        left,
+        left_start,
+        right,
+        right_start,
+        len,
+    })
+}
+
+fn longest_common_contiguous_block(
+    left: &[String],
+    right: &[String],
+) -> Option<(usize, usize, usize)> {
+    let mut lengths = vec![vec![0usize; right.len() + 1]; left.len() + 1];
+    let mut best = (0usize, 0usize, 0usize);
+
+    for left_index in (0..left.len()).rev() {
+        for right_index in (0..right.len()).rev() {
+            if left[left_index] == right[right_index] {
+                let len = lengths[left_index + 1][right_index + 1] + 1;
+                lengths[left_index][right_index] = len;
+                if len > best.2 {
+                    best = (left_index, right_index, len);
+                }
+            }
+        }
+    }
+
+    (best.2 > 0).then_some(best)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Segment {
+    Before,
+    After,
+}
+
+fn split_bodies(
+    conflict: &Conflict,
+    block: CommonBlock,
+    segment: Segment,
+) -> ConflictSides<ConflictBody> {
+    ConflictSides::new(
+        split_body(Side::Ours, &conflict.bodies.ours, block, segment),
+        split_body(Side::Base, &conflict.bodies.base, block, segment),
+        split_body(Side::Theirs, &conflict.bodies.theirs, block, segment),
+    )
+}
+
+fn split_body(
+    side: Side,
+    body: &ConflictBody,
+    block: CommonBlock,
+    segment: Segment,
+) -> ConflictBody {
+    let Some(start) = block_start_for_side(side, block) else {
+        return ConflictBody::default();
+    };
+
+    match segment {
+        Segment::Before => ConflictBody::from(body.lines()[..start].to_vec()),
+        Segment::After => ConflictBody::from(body.lines()[start + block.len..].to_vec()),
+    }
+}
+
+fn common_body(conflict: &Conflict, block: CommonBlock) -> ConflictBody {
+    let body = body_for_side(conflict, block.left);
+    ConflictBody::from(body.lines()[block.left_start..block.left_start + block.len].to_vec())
+}
+
+fn block_start_for_side(side: Side, block: CommonBlock) -> Option<usize> {
+    if side == block.left {
+        Some(block.left_start)
+    } else if side == block.right {
+        Some(block.right_start)
+    } else {
+        None
+    }
+}
+
+fn body_for_side(conflict: &Conflict, side: Side) -> &ConflictBody {
+    match side {
+        Side::Ours => &conflict.bodies.ours,
+        Side::Base => &conflict.bodies.base,
+        Side::Theirs => &conflict.bodies.theirs,
+    }
+}
