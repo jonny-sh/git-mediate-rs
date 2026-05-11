@@ -1,12 +1,10 @@
 use crate::types::{Conflict, ConflictBody, ConflictSides};
 
-pub(super) struct ConflictSplitter;
-
-impl ConflictSplitter {
-    pub(super) fn split(conflict: &Conflict) -> Option<Vec<Conflict>> {
-        let ours_parts = split_body(&conflict.bodies.ours);
-        let base_parts = split_body(&conflict.bodies.base);
-        let theirs_parts = split_body(&conflict.bodies.theirs);
+impl Conflict {
+    pub(super) fn split_marked_parts(&self) -> Option<Vec<Conflict>> {
+        let ours_parts = self.bodies.ours.split_on_marker_lines();
+        let base_parts = self.bodies.base.split_on_marker_lines();
+        let theirs_parts = self.bodies.theirs.split_on_marker_lines();
 
         if ours_parts.len() != base_parts.len()
             || ours_parts.len() != theirs_parts.len()
@@ -20,28 +18,29 @@ impl ConflictSplitter {
                 .into_iter()
                 .zip(base_parts)
                 .zip(theirs_parts)
-                .map(|((ours, base), theirs)| Conflict {
-                    markers: conflict.markers.clone(),
-                    bodies: ConflictSides::new(ours, base, theirs),
+                .map(|((ours, base), theirs)| {
+                    self.with_bodies(ConflictSides::new(ours, base, theirs))
                 })
                 .collect(),
         )
     }
 }
 
-fn split_body(body: &ConflictBody) -> Vec<ConflictBody> {
-    let mut parts = vec![Vec::new()];
+impl ConflictBody {
+    fn split_on_marker_lines(&self) -> Vec<ConflictBody> {
+        let mut parts = vec![Vec::new()];
 
-    for line in body {
-        if line.starts_with("~~~~~~~") {
-            parts.push(Vec::new());
-        } else {
-            parts
-                .last_mut()
-                .expect("parts is never empty")
-                .push(line.clone());
+        for line in self {
+            if line.starts_with("~~~~~~~") {
+                parts.push(Vec::new());
+            } else {
+                parts
+                    .last_mut()
+                    .expect("parts is never empty")
+                    .push(line.clone());
+            }
         }
-    }
 
-    parts.into_iter().map(ConflictBody::from).collect()
+        parts.into_iter().map(ConflictBody::from).collect()
+    }
 }

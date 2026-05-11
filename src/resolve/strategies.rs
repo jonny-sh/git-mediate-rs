@@ -2,133 +2,131 @@ use crate::types::{ConflictBody, ConflictSides};
 
 use super::ResolveOptions;
 
-pub(super) fn resolve_body(
-    options: &ResolveOptions,
-    sides: &ConflictSides<ConflictBody>,
-) -> Option<ConflictBody> {
-    if options.indentation {
-        resolve_with_indentation(options, sides)
-    } else {
-        resolve_without_indentation(options, sides)
+impl ConflictSides<ConflictBody> {
+    pub(super) fn resolve(&self, options: &ResolveOptions) -> Option<ConflictBody> {
+        if options.indentation {
+            self.resolve_with_indentation(options)
+        } else {
+            self.resolve_without_indentation(options)
+        }
     }
-}
 
-pub(super) fn resolve_value<T: Eq + Clone>(ours: &T, base: &T, theirs: &T) -> Option<T> {
-    if ours == base {
-        Some(theirs.clone())
-    } else if theirs == base {
-        Some(ours.clone())
-    } else if ours == theirs {
-        Some(ours.clone())
-    } else {
+    fn resolve_with_indentation(&self, options: &ResolveOptions) -> Option<ConflictBody> {
+        let prefixes = ConflictSides::new(
+            self.ours.indentation_prefix(),
+            self.base.indentation_prefix(),
+            self.theirs.indentation_prefix(),
+        );
+        let prefix = prefixes.resolve_value()?;
+
+        let unprefixed = ConflictSides::new(
+            self.ours.strip_prefix(&prefixes.ours),
+            self.base.strip_prefix(&prefixes.base),
+            self.theirs.strip_prefix(&prefixes.theirs),
+        );
+
+        let resolved = unprefixed.resolve_without_indentation(options)?;
+        Some(
+            resolved
+                .into_iter()
+                .map(|line| {
+                    if line.is_empty() {
+                        line
+                    } else {
+                        format!("{prefix}{line}")
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    fn resolve_without_indentation(&self, options: &ResolveOptions) -> Option<ConflictBody> {
+        if options.trivial {
+            if let Some(body) = self.resolve_value() {
+                return Some(body);
+            }
+        }
+
+        if options.lines_added_around {
+            let mut candidates = Vec::new();
+            if let Some(lines) = self.ours.added_around(&self.base, &self.theirs) {
+                candidates.push(lines);
+            }
+            if let Some(lines) = self.theirs.added_around(&self.base, &self.ours) {
+                candidates.push(lines);
+            }
+            if candidates.len() == 1 {
+                return candidates.into_iter().next();
+            }
+        }
+
         None
     }
 }
 
-fn resolve_with_indentation(
-    options: &ResolveOptions,
-    sides: &ConflictSides<ConflictBody>,
-) -> Option<ConflictBody> {
-    let prefixes = ConflictSides::new(
-        indentation_prefix(&sides.ours),
-        indentation_prefix(&sides.base),
-        indentation_prefix(&sides.theirs),
-    );
-    let prefix = resolve_value(&prefixes.ours, &prefixes.base, &prefixes.theirs)?;
-
-    let unprefixed = ConflictSides::new(
-        strip_prefix_from_body(&sides.ours, &prefixes.ours),
-        strip_prefix_from_body(&sides.base, &prefixes.base),
-        strip_prefix_from_body(&sides.theirs, &prefixes.theirs),
-    );
-
-    let resolved = resolve_without_indentation(options, &unprefixed)?;
-    Some(
-        resolved
-            .into_iter()
-            .map(|line| {
-                if line.is_empty() {
-                    line
-                } else {
-                    format!("{prefix}{line}")
-                }
-            })
-            .collect(),
-    )
-}
-
-fn resolve_without_indentation(
-    options: &ResolveOptions,
-    sides: &ConflictSides<ConflictBody>,
-) -> Option<ConflictBody> {
-    if options.trivial {
-        if let Some(body) = resolve_value(&sides.ours, &sides.base, &sides.theirs) {
-            return Some(body);
+impl<T: Eq + Clone> ConflictSides<T> {
+    pub(super) fn resolve_value(&self) -> Option<T> {
+        if self.ours == self.base {
+            Some(self.theirs.clone())
+        } else if self.theirs == self.base {
+            Some(self.ours.clone())
+        } else if self.ours == self.theirs {
+            Some(self.ours.clone())
+        } else {
+            None
         }
     }
-
-    if options.lines_added_around {
-        let mut candidates = Vec::new();
-        if let Some(lines) = added_both_sides(&sides.ours, &sides.base, &sides.theirs) {
-            candidates.push(lines);
-        }
-        if let Some(lines) = added_both_sides(&sides.theirs, &sides.base, &sides.ours) {
-            candidates.push(lines);
-        }
-        if candidates.len() == 1 {
-            return candidates.into_iter().next();
-        }
-    }
-
-    None
 }
 
-fn added_both_sides(
-    left: &ConflictBody,
-    base: &ConflictBody,
-    right: &ConflictBody,
-) -> Option<ConflictBody> {
-    if left.len() < base.len() || right.len() < base.len() {
-        return None;
-    }
-
-    if left.lines()[left.len() - base.len()..] != *base.lines()
-        || right.lines()[..base.len()] != *base.lines()
-    {
-        return None;
-    }
-
-    let mut out = left.lines().to_vec();
-    out.extend_from_slice(&right.lines()[base.len()..]);
-    Some(ConflictBody::from(out))
+pub(super) fn resolve_value<T: Eq + Clone>(ours: &T, base: &T, theirs: &T) -> Option<T> {
+    ConflictSides::new(ours, base, theirs)
+        .resolve_value()
+        .cloned()
 }
 
-fn indentation_prefix(lines: &ConflictBody) -> String {
-    let common = common_string_prefixes(lines);
-    common.chars().take_while(|c| *c == ' ').collect()
-}
-
-fn common_string_prefixes(lines: &ConflictBody) -> String {
-    let mut iter = lines.iter();
-    let Some(first) = iter.next() else {
-        return String::new();
-    };
-
-    let mut prefix = first.clone();
-    for line in iter {
-        prefix = common_string_prefix(&prefix, line);
-        if prefix.is_empty() {
-            break;
+impl ConflictBody {
+    fn added_around(&self, base: &ConflictBody, other: &ConflictBody) -> Option<ConflictBody> {
+        if self.len() < base.len() || other.len() < base.len() {
+            return None;
         }
-    }
-    prefix
-}
 
-fn strip_prefix_from_body(lines: &ConflictBody, prefix: &str) -> ConflictBody {
-    lines
-        .iter()
-        .map(|line| line.strip_prefix(prefix).unwrap_or(line).to_string())
-        .collect()
+        if self.lines()[self.len() - base.len()..] != *base.lines()
+            || other.lines()[..base.len()] != *base.lines()
+        {
+            return None;
+        }
+
+        let mut out = self.lines().to_vec();
+        out.extend_from_slice(&other.lines()[base.len()..]);
+        Some(ConflictBody::from(out))
+    }
+
+    fn indentation_prefix(&self) -> String {
+        let common = self.common_string_prefixes();
+        common.chars().take_while(|c| *c == ' ').collect()
+    }
+
+    fn common_string_prefixes(&self) -> String {
+        let mut iter = self.iter();
+        let Some(first) = iter.next() else {
+            return String::new();
+        };
+
+        let mut prefix = first.clone();
+        for line in iter {
+            prefix = common_string_prefix(&prefix, line);
+            if prefix.is_empty() {
+                break;
+            }
+        }
+        prefix
+    }
+
+    fn strip_prefix(&self, prefix: &str) -> ConflictBody {
+        self.iter()
+            .map(|line| line.strip_prefix(prefix).unwrap_or(line).to_string())
+            .collect()
+    }
 }
 
 fn common_string_prefix(left: &str, right: &str) -> String {

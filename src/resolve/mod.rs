@@ -6,9 +6,7 @@ mod window;
 use crate::parse::parse_conflicts;
 use crate::types::{Chunk, Conflict, ConflictBody, FileResult, Resolution};
 
-use normalize::preprocess_conflict;
-use split::ConflictSplitter;
-use strategies::resolve_body;
+use normalize::PreprocessedConflict;
 use window::ConflictWindow;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +44,7 @@ enum ResolverOutcome {
 impl ResolverOutcome {
     fn into_resolution(self, template: &Conflict) -> Resolution {
         match self {
-            Self::Resolved(body) => Resolution::Resolved(body_to_string(&body)),
+            Self::Resolved(body) => Resolution::Resolved(body.to_text()),
             Self::Reduced(window) => {
                 Resolution::PartiallyReduced(window.reduced_conflict(template))
             }
@@ -56,7 +54,7 @@ impl ResolverOutcome {
 
     fn render_text(&self, template: &Conflict) -> String {
         match self {
-            Self::Resolved(body) => body_to_string(body),
+            Self::Resolved(body) => body.to_text(),
             Self::Reduced(window) => window.render_reduced_conflict_text(template),
             Self::Unchanged => template.to_conflict_text(),
         }
@@ -84,12 +82,11 @@ impl ResolverOutcome {
 }
 
 pub fn resolve_conflict(conflict: &Conflict) -> Resolution {
-    resolve_conflict_with_options(conflict, &ResolveOptions::default())
+    conflict.resolve()
 }
 
 pub fn resolve_conflict_with_options(conflict: &Conflict, options: &ResolveOptions) -> Resolution {
-    let processed = preprocess_conflict(conflict.clone(), options);
-    resolve_preprocessed_conflict(&processed, options).into_resolution(&processed)
+    conflict.resolve_with_options(options)
 }
 
 pub fn resolve_chunks(chunks: Vec<Chunk>) -> (Vec<Chunk>, FileResult) {
@@ -124,7 +121,9 @@ pub fn resolve_chunks_with_options(
 
 fn resolve_conflict_text(conflict: &Conflict, options: &ResolveOptions) -> (FileResult, String) {
     let parts = if options.split_markers {
-        ConflictSplitter::split(conflict).unwrap_or_else(|| vec![conflict.clone()])
+        conflict
+            .split_marked_parts()
+            .unwrap_or_else(|| vec![conflict.clone()])
     } else {
         vec![conflict.clone()]
     };
@@ -133,14 +132,14 @@ fn resolve_conflict_text(conflict: &Conflict, options: &ResolveOptions) -> (File
     let mut combined = String::new();
 
     for part in &parts {
-        let processed = preprocess_conflict(part.clone(), options);
-        let outcome = resolve_preprocessed_conflict(&processed, options);
+        let processed = part.preprocess(options);
+        let outcome = processed.resolve(options);
         let part_stats = outcome.file_result();
 
         aggregate.resolved += part_stats.resolved;
         aggregate.partially_resolved += part_stats.partially_resolved;
         aggregate.failed += part_stats.failed;
-        combined.push_str(&outcome.render_text(&processed));
+        combined.push_str(&outcome.render_text(processed.as_conflict()));
     }
 
     if parts.len() > 1 {
@@ -162,35 +161,46 @@ fn resolve_conflict_text(conflict: &Conflict, options: &ResolveOptions) -> (File
     (aggregate, combined)
 }
 
-fn resolve_preprocessed_conflict(conflict: &Conflict, options: &ResolveOptions) -> ResolverOutcome {
-    if let Some(body) = resolve_body(options, &conflict.bodies) {
-        return ResolverOutcome::Resolved(body);
+impl Conflict {
+    pub fn resolve(&self) -> Resolution {
+        self.resolve_with_options(&ResolveOptions::default())
     }
 
-    if !options.reduce {
-        return ResolverOutcome::Unchanged;
+    pub fn resolve_with_options(&self, options: &ResolveOptions) -> Resolution {
+        let processed = self.preprocess(options);
+        processed
+            .resolve(options)
+            .into_resolution(processed.as_conflict())
     }
 
-    let window = ConflictWindow::from_conflict(conflict);
-    if !window.is_reduced() {
-        return ResolverOutcome::Unchanged;
+    fn preprocess(&self, options: &ResolveOptions) -> PreprocessedConflict {
+        PreprocessedConflict::new(self, options)
     }
-
-    if let Some(body) = resolve_body(options, window.core()) {
-        return ResolverOutcome::Resolved(window.surround(body));
-    }
-
-    ResolverOutcome::Reduced(window)
 }
 
-fn body_to_string(body: &ConflictBody) -> String {
-    if body.is_empty() {
-        return String::new();
-    }
+impl PreprocessedConflict {
+    fn resolve(&self, options: &ResolveOptions) -> ResolverOutcome {
+        let conflict = self.as_conflict();
 
-    let mut text = body.lines().join("\n");
-    text.push('\n');
-    text
+        if let Some(body) = conflict.bodies.resolve(options) {
+            return ResolverOutcome::Resolved(body);
+        }
+
+        if !options.reduce {
+            return ResolverOutcome::Unchanged;
+        }
+
+        let window = ConflictWindow::from_conflict(conflict);
+        if !window.is_reduced() {
+            return ResolverOutcome::Unchanged;
+        }
+
+        if let Some(body) = window.core().resolve(options) {
+            return ResolverOutcome::Resolved(window.surround(body));
+        }
+
+        ResolverOutcome::Reduced(window)
+    }
 }
 
 #[cfg(test)]
@@ -307,14 +317,14 @@ theirs
             &["    foo", "    baz"],
         );
 
-        assert!(matches!(resolve_conflict(&conflict), Resolution::Unchanged));
+        assert!(matches!(conflict.resolve(), Resolution::Unchanged));
 
         let opts = ResolveOptions {
             indentation: true,
             ..ResolveOptions::default()
         };
         assert!(matches!(
-            resolve_conflict_with_options(&conflict, &opts),
+            conflict.resolve_with_options(&opts),
             Resolution::Resolved(text) if text == "        foo\n        baz\n"
         ));
     }
@@ -323,14 +333,14 @@ theirs
     fn test_lines_added_around_option() {
         let conflict = make_conflict(&["before", "base"], &["base"], &["base", "after"]);
 
-        assert!(matches!(resolve_conflict(&conflict), Resolution::Unchanged));
+        assert!(matches!(conflict.resolve(), Resolution::Unchanged));
 
         let opts = ResolveOptions {
             lines_added_around: true,
             ..ResolveOptions::default()
         };
         assert!(matches!(
-            resolve_conflict_with_options(&conflict, &opts),
+            conflict.resolve_with_options(&opts),
             Resolution::Resolved(text) if text == "before\nbase\nafter\n"
         ));
     }
@@ -388,7 +398,7 @@ still-theirs
             ..ResolveOptions::default()
         };
         assert!(matches!(
-            resolve_conflict_with_options(&conflict, &opts),
+            conflict.resolve_with_options(&opts),
             Resolution::Resolved(text) if text == "Hello   Booya\n"
         ));
     }

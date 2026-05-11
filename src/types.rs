@@ -35,6 +35,16 @@ impl ConflictBody {
     {
         self.0.extend(lines);
     }
+
+    pub fn to_text(&self) -> String {
+        if self.is_empty() {
+            return String::new();
+        }
+
+        let mut text = self.lines().join("\n");
+        text.push('\n');
+        text
+    }
 }
 
 impl From<Vec<String>> for ConflictBody {
@@ -198,11 +208,16 @@ impl Conflict {
         ConflictBody::from(out)
     }
 
+    pub fn with_bodies(&self, bodies: ConflictSides<ConflictBody>) -> Self {
+        Self {
+            markers: self.markers.clone(),
+            bodies,
+        }
+    }
+
     /// Reconstructs the full conflict text with markers.
     pub fn to_conflict_text(&self) -> String {
-        let mut out = self.to_conflict_lines().lines().join("\n");
-        out.push('\n');
-        out
+        self.to_conflict_lines().to_text()
     }
 }
 

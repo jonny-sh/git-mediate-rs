@@ -36,10 +36,7 @@ impl ConflictWindow {
     }
 
     pub(super) fn reduced_conflict(&self, template: &Conflict) -> Conflict {
-        Conflict {
-            markers: template.markers.clone(),
-            bodies: self.core.clone(),
-        }
+        template.with_bodies(self.core.clone())
     }
 
     pub(super) fn surround(&self, body: ConflictBody) -> ConflictBody {
@@ -51,18 +48,8 @@ impl ConflictWindow {
 
     pub(super) fn render_reduced_conflict_text(&self, template: &Conflict) -> String {
         let reduced = self.reduced_conflict(template);
-        body_to_string(&self.surround(reduced.to_conflict_lines()))
+        self.surround(reduced.to_conflict_lines()).to_text()
     }
-}
-
-fn body_to_string(body: &ConflictBody) -> String {
-    if body.is_empty() {
-        return String::new();
-    }
-
-    let mut text = body.lines().join("\n");
-    text.push('\n');
-    text
 }
 
 fn shared_prefix(base: &[String], ours: &[String], theirs: &[String]) -> usize {
