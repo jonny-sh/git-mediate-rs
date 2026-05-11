@@ -501,6 +501,72 @@ fn test_delete_modify_conflict_is_prepared_for_mediation() {
 }
 
 #[test]
+fn test_delete_modify_conflict_reduction_is_written_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(p)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+
+    git(&["init"]);
+    git(&["config", "merge.conflictstyle", "diff3"]);
+    fs::write(p.join("file.txt"), "top\nbase\nbottom\n").unwrap();
+    git(&["add", "file.txt"]);
+    git(&["commit", "-m", "base"]);
+
+    git(&["checkout", "-b", "delete-branch"]);
+    git(&["rm", "file.txt"]);
+    git(&["commit", "-m", "delete"]);
+
+    git(&["checkout", "main"]);
+    git(&["checkout", "-b", "modify-branch"]);
+    fs::write(p.join("file.txt"), "top\nmodified\nbottom\n").unwrap();
+    git(&["add", "file.txt"]);
+    git(&["commit", "-m", "modify"]);
+
+    let merge = Command::new("git")
+        .args(["merge", "delete-branch"])
+        .current_dir(p)
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@test.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@test.com")
+        .output()
+        .unwrap();
+    assert!(!merge.status.success());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-mediate"))
+        .current_dir(p)
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "git-mediate should still fail on reduced-but-unresolved delete/modify conflicts"
+    );
+
+    assert_eq!(
+        fs::read_to_string(p.join("file.txt")).unwrap(),
+        "top\n<<<<<<< LOCAL\nmodified\n||||||| BASE\nbase\n=======\n>>>>>>> REMOTE\nbottom\n"
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 reduced"));
+}
+
+#[test]
 fn test_git_mediate_options_env_is_applied() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("file.txt");

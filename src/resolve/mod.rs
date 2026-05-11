@@ -195,11 +195,22 @@ impl PreprocessedConflict {
             return ResolverOutcome::Unchanged;
         }
 
+        if conflict.is_delete_modify() {
+            return ResolverOutcome::Reduced(window);
+        }
+
         if let Some(body) = window.core().resolve(options) {
             return ResolverOutcome::Resolved(window.surround(body));
         }
 
         ResolverOutcome::Reduced(window)
+    }
+}
+
+impl Conflict {
+    fn is_delete_modify(&self) -> bool {
+        !self.bodies.base.is_empty()
+            && (self.bodies.ours.is_empty() ^ self.bodies.theirs.is_empty())
     }
 }
 
@@ -437,6 +448,36 @@ still-theirs
                 if reduced.bodies.ours == body(&["ours\r"])
                     && reduced.bodies.base == body(&[])
                     && reduced.bodies.theirs == body(&["theirs\r"])
+        ));
+    }
+
+    #[test]
+    fn test_line_ending_fix_reduces_delete_modify_conflict() {
+        let conflict = make_conflict(
+            &["shared\r", "ours\r", "tail\r"],
+            &["shared", "base", "tail"],
+            &[],
+        );
+
+        assert!(matches!(
+            conflict.resolve(),
+            Resolution::PartiallyReduced(reduced)
+                if reduced.bodies.ours == body(&["ours"])
+                    && reduced.bodies.base == body(&["base"])
+                    && reduced.bodies.theirs == body(&[])
+        ));
+    }
+
+    #[test]
+    fn test_delete_modify_reduction_does_not_auto_resolve_reduced_core() {
+        let conflict = make_conflict(&["shared", "added"], &["shared"], &[]);
+
+        assert!(matches!(
+            conflict.resolve(),
+            Resolution::PartiallyReduced(reduced)
+                if reduced.bodies.ours == body(&["added"])
+                    && reduced.bodies.base == body(&[])
+                    && reduced.bodies.theirs == body(&[])
         ));
     }
 }

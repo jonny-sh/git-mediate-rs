@@ -17,13 +17,13 @@ impl ConflictWindow {
         let suffix_len = shared_suffix_after_prefix(base, ours, theirs, prefix_len);
 
         Self {
-            prefix: boundary_prefix(ours, prefix_len),
+            prefix: boundary_prefix(base, ours, theirs, prefix_len),
             core: ConflictSides::new(
                 trimmed_body(ours, prefix_len, suffix_len),
                 trimmed_body(base, prefix_len, suffix_len),
                 trimmed_body(theirs, prefix_len, suffix_len),
             ),
-            suffix: boundary_suffix(ours, suffix_len),
+            suffix: boundary_suffix(base, ours, theirs, suffix_len),
         }
     }
 
@@ -53,10 +53,11 @@ impl ConflictWindow {
 }
 
 fn shared_prefix(base: &[String], ours: &[String], theirs: &[String]) -> usize {
-    if base.is_empty() {
-        common_prefix_len(ours, theirs)
-    } else {
-        common_prefix_len(base, ours).min(common_prefix_len(base, theirs))
+    match (ours.is_empty(), base.is_empty(), theirs.is_empty()) {
+        (_, true, _) => common_prefix_len(ours, theirs),
+        (true, _, _) => common_prefix_len(base, theirs),
+        (_, _, true) => common_prefix_len(base, ours),
+        _ => common_prefix_len(base, ours).min(common_prefix_len(base, theirs)),
     }
 }
 
@@ -70,15 +71,26 @@ fn shared_suffix_after_prefix(
     let base_after_prefix = &base[prefix_len.min(base.len())..];
     let theirs_after_prefix = &theirs[prefix_len.min(theirs.len())..];
 
-    if base_after_prefix.is_empty() {
-        common_suffix_len(ours_after_prefix, theirs_after_prefix)
-    } else {
-        common_suffix_len(base_after_prefix, ours_after_prefix)
-            .min(common_suffix_len(base_after_prefix, theirs_after_prefix))
+    match (
+        ours_after_prefix.is_empty(),
+        base_after_prefix.is_empty(),
+        theirs_after_prefix.is_empty(),
+    ) {
+        (_, true, _) => common_suffix_len(ours_after_prefix, theirs_after_prefix),
+        (true, _, _) => common_suffix_len(base_after_prefix, theirs_after_prefix),
+        (_, _, true) => common_suffix_len(base_after_prefix, ours_after_prefix),
+        _ => common_suffix_len(base_after_prefix, ours_after_prefix)
+            .min(common_suffix_len(base_after_prefix, theirs_after_prefix)),
     }
 }
 
-fn boundary_prefix(lines: &[String], prefix_len: usize) -> ConflictBody {
+fn boundary_prefix(
+    base: &[String],
+    ours: &[String],
+    theirs: &[String],
+    prefix_len: usize,
+) -> ConflictBody {
+    let lines = boundary_source(base, ours, theirs, prefix_len);
     lines
         .iter()
         .take(prefix_len.min(lines.len()))
@@ -86,9 +98,27 @@ fn boundary_prefix(lines: &[String], prefix_len: usize) -> ConflictBody {
         .collect()
 }
 
-fn boundary_suffix(lines: &[String], suffix_len: usize) -> ConflictBody {
+fn boundary_suffix(
+    base: &[String],
+    ours: &[String],
+    theirs: &[String],
+    suffix_len: usize,
+) -> ConflictBody {
+    let lines = boundary_source(base, ours, theirs, suffix_len);
     let start = lines.len().saturating_sub(suffix_len.min(lines.len()));
     ConflictBody::from(lines[start..].to_vec())
+}
+
+fn boundary_source<'a>(
+    base: &'a [String],
+    ours: &'a [String],
+    theirs: &'a [String],
+    len: usize,
+) -> &'a [String] {
+    [ours, base, theirs]
+        .into_iter()
+        .find(|lines| lines.len() >= len)
+        .unwrap_or(ours)
 }
 
 fn trimmed_body(lines: &[String], prefix_len: usize, suffix_len: usize) -> ConflictBody {
@@ -181,5 +211,35 @@ mod tests {
         assert!(window.core.base.is_empty());
         assert!(window.core.theirs.is_empty());
         assert!(window.suffix.is_empty());
+    }
+
+    #[test]
+    fn test_window_trims_shared_prefix_with_empty_theirs() {
+        let window = ConflictWindow::from_conflict(&make_conflict(
+            &["shared", "ours"],
+            &["shared", "base"],
+            &[],
+        ));
+
+        assert_eq!(lines(&window.prefix), vec!["shared"]);
+        assert_eq!(lines(&window.core.ours), vec!["ours"]);
+        assert_eq!(lines(&window.core.base), vec!["base"]);
+        assert!(window.core.theirs.is_empty());
+        assert!(window.suffix.is_empty());
+    }
+
+    #[test]
+    fn test_window_trims_shared_suffix_with_empty_ours() {
+        let window = ConflictWindow::from_conflict(&make_conflict(
+            &[],
+            &["base", "shared"],
+            &["theirs", "shared"],
+        ));
+
+        assert!(window.prefix.is_empty());
+        assert!(window.core.ours.is_empty());
+        assert_eq!(lines(&window.core.base), vec!["base"]);
+        assert_eq!(lines(&window.core.theirs), vec!["theirs"]);
+        assert_eq!(lines(&window.suffix), vec!["shared"]);
     }
 }
