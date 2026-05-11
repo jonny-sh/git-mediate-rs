@@ -38,13 +38,13 @@ pub(super) fn reduce_delete_modify_common(conflict: &Conflict) -> Option<Conflic
 
     let changed = if bodies.ours.is_empty() {
         let (base, theirs, removed_common) =
-            without_common_blocks(bodies.base.lines(), bodies.theirs.lines());
+            without_deleted_common_blocks(bodies.base.lines(), bodies.theirs.lines());
         bodies.base = ConflictBody::from(base);
         bodies.theirs = ConflictBody::from(theirs);
         removed_common
     } else {
         let (ours, base, removed_common) =
-            without_common_blocks(bodies.ours.lines(), bodies.base.lines());
+            without_deleted_common_blocks(bodies.ours.lines(), bodies.base.lines());
         bodies.ours = ConflictBody::from(ours);
         bodies.base = ConflictBody::from(base);
         removed_common
@@ -58,15 +58,37 @@ fn is_delete_modify(conflict: &Conflict) -> bool {
         && (conflict.bodies.ours.is_empty() ^ conflict.bodies.theirs.is_empty())
 }
 
-fn without_common_blocks(left: &[String], right: &[String]) -> (Vec<String>, Vec<String>, bool) {
-    let Some((left_start, right_start, len)) = longest_common_contiguous_block(left, right) else {
+fn without_deleted_common_blocks(
+    left: &[String],
+    right: &[String],
+) -> (Vec<String>, Vec<String>, bool) {
+    without_common_blocks_by(left, right, |left, right| {
+        whitespace_key(left) == whitespace_key(right)
+    })
+}
+
+fn whitespace_key(line: &str) -> String {
+    line.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn without_common_blocks_by(
+    left: &[String],
+    right: &[String],
+    is_common: impl Fn(&str, &str) -> bool + Copy,
+) -> (Vec<String>, Vec<String>, bool) {
+    let Some((left_start, right_start, len)) =
+        longest_common_contiguous_block_by(left, right, is_common)
+    else {
         return (left.to_vec(), right.to_vec(), false);
     };
 
     let (mut left_before, mut right_before, _) =
-        without_common_blocks(&left[..left_start], &right[..right_start]);
-    let (left_after, right_after, _) =
-        without_common_blocks(&left[left_start + len..], &right[right_start + len..]);
+        without_common_blocks_by(&left[..left_start], &right[..right_start], is_common);
+    let (left_after, right_after, _) = without_common_blocks_by(
+        &left[left_start + len..],
+        &right[right_start + len..],
+        is_common,
+    );
 
     left_before.extend(left_after);
     right_before.extend(right_after);
@@ -134,12 +156,20 @@ fn longest_common_contiguous_block(
     left: &[String],
     right: &[String],
 ) -> Option<(usize, usize, usize)> {
+    longest_common_contiguous_block_by(left, right, |left, right| left == right)
+}
+
+fn longest_common_contiguous_block_by(
+    left: &[String],
+    right: &[String],
+    is_common: impl Fn(&str, &str) -> bool,
+) -> Option<(usize, usize, usize)> {
     let mut lengths = vec![vec![0usize; right.len() + 1]; left.len() + 1];
     let mut best = (0usize, 0usize, 0usize);
 
     for left_index in (0..left.len()).rev() {
         for right_index in (0..right.len()).rev() {
-            if left[left_index] == right[right_index] {
+            if is_common(&left[left_index], &right[right_index]) {
                 let len = lengths[left_index + 1][right_index + 1] + 1;
                 lengths[left_index][right_index] = len;
                 if len > best.2 {
