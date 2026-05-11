@@ -241,6 +241,12 @@ impl PreprocessedConflict {
                 return ResolverOutcome::Unchanged;
             }
             if let Some(reduced) = reduce_delete_modify_common(conflict) {
+                if reduced.bodies.ours.is_empty()
+                    && reduced.bodies.base.is_empty()
+                    && reduced.bodies.theirs.is_empty()
+                {
+                    return ResolverOutcome::Resolved(ConflictBody::default());
+                }
                 return ResolverOutcome::ReducedConflict(reduced);
             }
             return ResolverOutcome::Unchanged;
@@ -547,6 +553,42 @@ still-theirs
         let conflict = make_conflict(&["shared", "added"], &["shared"], &[]);
 
         assert!(matches!(conflict.resolve(), Resolution::Unchanged));
+    }
+
+    #[test]
+    fn test_reduce_deleted_treats_indentation_as_common() {
+        let conflict = make_conflict(
+            &["        fn method() {", "            call();", "        }"],
+            &["    fn method() {", "        call();", "    }"],
+            &[],
+        );
+        let opts = ResolveOptions {
+            reduce_deleted: true,
+            ..ResolveOptions::default()
+        };
+
+        assert!(matches!(
+            conflict.resolve_with_options(&opts),
+            Resolution::Resolved(text) if text.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_reduce_deleted_treats_whitespace_runs_as_common() {
+        let conflict = make_conflict(
+            &["let value = compute(1,  2);", "", "return value;"],
+            &["let   value = compute(1, 2);", "   ", "return   value;"],
+            &[],
+        );
+        let opts = ResolveOptions {
+            reduce_deleted: true,
+            ..ResolveOptions::default()
+        };
+
+        assert!(matches!(
+            conflict.resolve_with_options(&opts),
+            Resolution::Resolved(text) if text.is_empty()
+        ));
     }
 
     #[test]

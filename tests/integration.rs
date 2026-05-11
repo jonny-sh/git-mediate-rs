@@ -600,6 +600,62 @@ bottom
 }
 
 #[test]
+fn test_reduce_deleted_resolves_whitespace_only_delete_modify_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("file.txt");
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(dir.path())
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+
+    git(&["init"]);
+    git(&["config", "merge.conflictstyle", "diff3"]);
+
+    fs::write(
+        &file_path,
+        "\
+<<<<<<< LOCAL
+        fn method() {
+            call();
+        }
+||||||| BASE
+    fn method() {
+        call();
+    }
+=======
+>>>>>>> REMOTE
+",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-mediate"))
+        .args(["--reduce-deleted", "--merge-file", "file.txt"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "git-mediate failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(fs::read_to_string(&file_path).unwrap(), "");
+}
+
+#[test]
 fn test_internal_common_reduction_is_written_back() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("file.txt");
