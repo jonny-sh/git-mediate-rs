@@ -62,18 +62,12 @@ fn line_break_fix(conflict: &Conflict) -> Conflict {
         infer_line_endings(&conflict.bodies.base),
         infer_line_endings(&conflict.bodies.theirs),
     );
-    if conflict.bodies.ours.iter().any(|line| line.is_empty())
-        || conflict.bodies.base.iter().any(|line| line.is_empty())
-        || conflict.bodies.theirs.iter().any(|line| line.is_empty())
-        || (endings.ours == endings.base && endings.base == endings.theirs)
-    {
+    if endings.ours == endings.base && endings.base == endings.theirs {
         return conflict.clone();
     }
 
-    match resolve_value(&endings.ours, &endings.base, &endings.theirs) {
-        Some(LineEnding::Lf) => {
-            map_conflict_lines(conflict, |line| line.trim_end_matches('\r').to_string())
-        }
+    match target_line_ending(&endings) {
+        Some(LineEnding::Lf) => map_conflict_lines(conflict, normalize_lf),
         Some(LineEnding::Crlf) => map_conflict_lines(conflict, |line| {
             if line.ends_with('\r') {
                 line.to_string()
@@ -85,20 +79,53 @@ fn line_break_fix(conflict: &Conflict) -> Conflict {
     }
 }
 
+fn normalize_lf(line: &str) -> String {
+    line.trim_end_matches('\r').to_string()
+}
+
+fn target_line_ending(endings: &ConflictSides<LineEnding>) -> Option<LineEnding> {
+    match resolve_value(&endings.ours, &endings.base, &endings.theirs) {
+        Some(LineEnding::Lf) => return Some(LineEnding::Lf),
+        Some(LineEnding::Crlf) => return Some(LineEnding::Crlf),
+        _ => {}
+    }
+
+    let known = [endings.ours, endings.base, endings.theirs]
+        .into_iter()
+        .filter(|ending| matches!(ending, LineEnding::Lf | LineEnding::Crlf))
+        .count();
+
+    if known != 2 {
+        return None;
+    }
+
+    match endings.base {
+        LineEnding::Lf | LineEnding::Crlf => Some(endings.base),
+        _ => match endings.ours {
+            LineEnding::Lf | LineEnding::Crlf => Some(endings.ours),
+            _ => match endings.theirs {
+                LineEnding::Lf | LineEnding::Crlf => Some(endings.theirs),
+                _ => None,
+            },
+        },
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LineEnding {
     Lf,
     Crlf,
     Mixed,
+    Unknown,
 }
 
 fn infer_line_endings(lines: &ConflictBody) -> LineEnding {
-    if lines.is_empty() {
-        return LineEnding::Mixed;
-    }
-
     let mut current = None;
     for line in lines {
+        if line.is_empty() {
+            continue;
+        }
+
         let ending = if line.ends_with('\r') {
             LineEnding::Crlf
         } else {
@@ -111,5 +138,5 @@ fn infer_line_endings(lines: &ConflictBody) -> LineEnding {
         }
     }
 
-    current.unwrap_or(LineEnding::Mixed)
+    current.unwrap_or(LineEnding::Unknown)
 }

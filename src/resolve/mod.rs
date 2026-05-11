@@ -402,4 +402,41 @@ still-theirs
             Resolution::Resolved(text) if text == "Hello   Booya\n"
         ));
     }
+
+    #[test]
+    fn test_line_ending_fix_resolves_deleted_theirs() {
+        let conflict = make_conflict(
+            &["fn main() {\r", "\r", "    println!(\"hi\");\r", "}\r"],
+            &["fn main() {", "", "    println!(\"hi\");", "}"],
+            &[],
+        );
+
+        assert!(matches!(
+            conflict.resolve(),
+            Resolution::Resolved(text) if text.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_line_ending_fix_resolves_deleted_ours() {
+        let conflict = make_conflict(&[], &["fn main() {}\r"], &["fn main() {}"]);
+
+        assert!(matches!(
+            conflict.resolve(),
+            Resolution::Resolved(text) if text.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_line_ending_fix_runs_before_reduction_with_empty_side() {
+        let conflict = make_conflict(&["shared\r", "ours\r"], &[], &["shared", "theirs"]);
+
+        assert!(matches!(
+            conflict.resolve(),
+            Resolution::PartiallyReduced(reduced)
+                if reduced.bodies.ours == body(&["ours\r"])
+                    && reduced.bodies.base == body(&[])
+                    && reduced.bodies.theirs == body(&["theirs\r"])
+        ));
+    }
 }
