@@ -551,6 +551,7 @@ fn test_delete_modify_conflict_reduction_is_written_back() {
     assert!(!merge.status.success());
 
     let output = Command::new(env!("CARGO_BIN_EXE_git-mediate"))
+        .arg("--reduce-deleted")
         .current_dir(p)
         .output()
         .unwrap();
@@ -564,6 +565,38 @@ fn test_delete_modify_conflict_reduction_is_written_back() {
         "<<<<<<< LOCAL\nmodified\n||||||| BASE\nbase\n=======\n>>>>>>> REMOTE\n"
     );
     assert!(String::from_utf8_lossy(&output.stdout).contains("1 reduced"));
+}
+
+#[test]
+fn test_delete_modify_conflict_reduction_is_opt_in() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("file.txt");
+
+    let original = "\
+<<<<<<< LOCAL
+top
+modified
+bottom
+||||||| BASE
+top
+base
+bottom
+=======
+>>>>>>> REMOTE
+";
+    fs::write(&file_path, original).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-mediate"))
+        .args(["--merge-file", "file.txt"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "git-mediate should still fail on unresolved delete/modify conflicts"
+    );
+    assert_eq!(fs::read_to_string(&file_path).unwrap(), original);
 }
 
 #[test]
@@ -611,7 +644,7 @@ base-end
     .unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_git-mediate"))
-        .args(["--merge-file", "file.txt"])
+        .args(["--reduce-deleted", "--merge-file", "file.txt"])
         .current_dir(dir.path())
         .output()
         .unwrap();

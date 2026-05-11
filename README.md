@@ -38,6 +38,7 @@ git-mediate applies these strategies in order:
 2. **Trivial resolution** — if one side matches the base, take the other; if both sides match, take either
 3. **Indentation-aware resolution** — if one side re-indented code while the other changed content, merge both changes (indent + content resolved independently)
 4. **Prefix/suffix reduction** — strip matching lines at conflict boundaries, then retry resolution on the smaller conflict
+5. **Deleted-side reduction** — with `--reduce-deleted`, shrink delete/modify conflicts by removing common context from the two non-deleted sides without emitting that context as kept text
 
 ## Installation
 
@@ -94,6 +95,7 @@ Options:
   -C, --no-color                 Disable colored output
   -n, --dry-run                  Only print what would be done, don't modify files
       --no-add                   Don't stage resolved files with git add
+      --reduce-deleted           Reduce delete/modify conflicts by stripping common non-deleted context
   -v, --verbose                  Be verbose about what's happening
   -h, --help                     Print help
   -V, --version                  Print version
