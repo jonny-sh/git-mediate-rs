@@ -30,6 +30,9 @@ struct ResolutionCliArgs {
     #[arg(long = "lines-added-around")]
     lines_added_around: bool,
 
+    #[arg(long = "reduce-deleted")]
+    reduce_deleted: bool,
+
     #[arg(long = "split-markers")]
     split_markers: bool,
     #[arg(long = "no-split-markers")]
@@ -66,6 +69,9 @@ impl ResolutionCliArgs {
         }
         if self.lines_added_around {
             options.lines_added_around = true;
+        }
+        if self.reduce_deleted {
+            options.reduce_deleted = true;
         }
         if self.split_markers {
             options.split_markers = true;

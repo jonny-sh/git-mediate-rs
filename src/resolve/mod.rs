@@ -18,6 +18,7 @@ pub struct ResolveOptions {
     pub untabify: Option<usize>,
     pub line_endings: bool,
     pub lines_added_around: bool,
+    pub reduce_deleted: bool,
     pub split_markers: bool,
     pub indentation: bool,
 }
@@ -30,6 +31,7 @@ impl Default for ResolveOptions {
             untabify: None,
             line_endings: true,
             lines_added_around: false,
+            reduce_deleted: false,
             split_markers: true,
             indentation: false,
         }
@@ -235,6 +237,9 @@ impl PreprocessedConflict {
         }
 
         if conflict.is_delete_modify() {
+            if !options.reduce_deleted {
+                return ResolverOutcome::Unchanged;
+            }
             if let Some(reduced) = reduce_delete_modify_common(conflict) {
                 return ResolverOutcome::ReducedConflict(reduced);
             }
@@ -297,6 +302,7 @@ mod tests {
         assert!(opts.split_markers);
         assert!(!opts.indentation);
         assert!(!opts.lines_added_around);
+        assert!(!opts.reduce_deleted);
         assert_eq!(opts.untabify, None);
     }
 
@@ -505,9 +511,13 @@ still-theirs
             &["shared", "base", "tail"],
             &[],
         );
+        let opts = ResolveOptions {
+            reduce_deleted: true,
+            ..ResolveOptions::default()
+        };
 
         assert!(matches!(
-            conflict.resolve(),
+            conflict.resolve_with_options(&opts),
             Resolution::PartiallyReduced(reduced)
                 if reduced.bodies.ours == body(&["ours"])
                     && reduced.bodies.base == body(&["base"])
@@ -518,14 +528,25 @@ still-theirs
     #[test]
     fn test_delete_modify_reduction_does_not_auto_resolve_reduced_core() {
         let conflict = make_conflict(&["shared", "added"], &["shared"], &[]);
+        let opts = ResolveOptions {
+            reduce_deleted: true,
+            ..ResolveOptions::default()
+        };
 
         assert!(matches!(
-            conflict.resolve(),
+            conflict.resolve_with_options(&opts),
             Resolution::PartiallyReduced(reduced)
                 if reduced.bodies.ours == body(&["added"])
                     && reduced.bodies.base == body(&[])
                     && reduced.bodies.theirs == body(&[])
         ));
+    }
+
+    #[test]
+    fn test_delete_modify_reduction_is_opt_in() {
+        let conflict = make_conflict(&["shared", "added"], &["shared"], &[]);
+
+        assert!(matches!(conflict.resolve(), Resolution::Unchanged));
     }
 
     #[test]
@@ -545,7 +566,11 @@ base-end
 >>>>>>> branch
 ";
         let chunks = parse_conflicts(input).unwrap();
-        let (resolved, stats) = resolve_chunks(chunks);
+        let opts = ResolveOptions {
+            reduce_deleted: true,
+            ..ResolveOptions::default()
+        };
+        let (resolved, stats) = resolve_chunks_with_options(chunks, &opts);
 
         assert_eq!(stats.partially_resolved, 1);
         assert_eq!(
@@ -578,7 +603,11 @@ base-end
 >>>>>>> branch
 ";
         let chunks = parse_conflicts(input).unwrap();
-        let (resolved, stats) = resolve_chunks(chunks);
+        let opts = ResolveOptions {
+            reduce_deleted: true,
+            ..ResolveOptions::default()
+        };
+        let (resolved, stats) = resolve_chunks_with_options(chunks, &opts);
 
         assert_eq!(stats.partially_resolved, 1);
         assert_eq!(
