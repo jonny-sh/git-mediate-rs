@@ -1,4 +1,4 @@
-use crate::types::{Conflict, ConflictBody, ConflictSides};
+use crate::types::{Chunk, Conflict, ConflictBody, ConflictSides};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ConflictWindow {
@@ -46,9 +46,18 @@ impl ConflictWindow {
         ConflictBody::from(lines)
     }
 
-    pub(super) fn render_reduced_conflict_text(&self, template: &Conflict) -> String {
-        let reduced = self.reduced_conflict(template);
-        self.surround(reduced.to_conflict_lines()).to_text()
+    pub(super) fn reduced_chunks(&self, template: &Conflict) -> Vec<Chunk> {
+        let mut chunks = Vec::new();
+        push_body_chunk(&mut chunks, &self.prefix);
+        chunks.push(Chunk::Conflict(self.reduced_conflict(template)));
+        push_body_chunk(&mut chunks, &self.suffix);
+        chunks
+    }
+}
+
+fn push_body_chunk(chunks: &mut Vec<Chunk>, body: &ConflictBody) {
+    if !body.is_empty() {
+        chunks.push(Chunk::Plain(body.to_text()));
     }
 }
 

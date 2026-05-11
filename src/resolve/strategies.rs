@@ -66,14 +66,14 @@ impl ConflictSides<ConflictBody> {
 
 impl<T: Eq + Clone> ConflictSides<T> {
     pub(super) fn resolve_value(&self) -> Option<T> {
-        if self.ours == self.base {
-            Some(self.theirs.clone())
-        } else if self.theirs == self.base {
-            Some(self.ours.clone())
-        } else if self.ours == self.theirs {
-            Some(self.ours.clone())
-        } else {
-            None
+        match (
+            self.ours == self.base,
+            self.theirs == self.base,
+            self.ours == self.theirs,
+        ) {
+            (true, _, _) => Some(self.theirs.clone()),
+            (_, true, _) | (_, _, true) => Some(self.ours.clone()),
+            _ => None,
         }
     }
 }
