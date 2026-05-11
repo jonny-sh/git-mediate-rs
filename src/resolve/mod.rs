@@ -42,6 +42,7 @@ enum ResolverOutcome {
     Resolved(ConflictBody),
     Reduced(ConflictWindow),
     ReducedConflict(Conflict),
+    ReducedChunks(Vec<Chunk>),
     Unchanged,
 }
 
@@ -53,6 +54,7 @@ impl ResolverOutcome {
                 Resolution::PartiallyReduced(window.reduced_conflict(template))
             }
             Self::ReducedConflict(conflict) => Resolution::PartiallyReduced(conflict),
+            Self::ReducedChunks(_) => Resolution::Unchanged,
             Self::Unchanged => Resolution::Unchanged,
         }
     }
@@ -62,6 +64,7 @@ impl ResolverOutcome {
             Self::Resolved(body) => body_to_chunks(body),
             Self::Reduced(window) => window.reduced_chunks(template),
             Self::ReducedConflict(conflict) => vec![Chunk::Conflict(conflict)],
+            Self::ReducedChunks(chunks) => chunks,
             Self::Unchanged => vec![Chunk::Conflict(template.clone())],
         }
     }
@@ -79,6 +82,11 @@ impl ResolverOutcome {
                 failed: 0,
             },
             Self::ReducedConflict(_) => FileResult {
+                resolved: 0,
+                partially_resolved: 1,
+                failed: 0,
+            },
+            Self::ReducedChunks(_) => FileResult {
                 resolved: 0,
                 partially_resolved: 1,
                 failed: 0,
@@ -277,10 +285,13 @@ impl PreprocessedConflict {
                 return ResolverOutcome::Unchanged;
             }
             if let Some(reduced) = reduce_delete_modify_common(conflict) {
-                if reduced.bodies.all_empty() {
+                if reduced.is_empty() {
                     return ResolverOutcome::Resolved(ConflictBody::default());
                 }
-                return ResolverOutcome::ReducedConflict(reduced);
+                if let [Chunk::Conflict(conflict)] = reduced.as_slice() {
+                    return ResolverOutcome::ReducedConflict(conflict.clone());
+                }
+                return ResolverOutcome::ReducedChunks(reduced);
             }
             return ResolverOutcome::Unchanged;
         }
@@ -641,7 +652,7 @@ still-theirs
     }
 
     #[test]
-    fn test_internal_common_block_reduces_delete_modify_conflict() {
+    fn test_internal_common_block_splits_delete_modify_conflict() {
         let input = "\
 <<<<<<< HEAD
 ours-start
@@ -665,13 +676,24 @@ base-end
 
         assert_eq!(stats.partially_resolved, 1);
         assert_eq!(
+            resolved
+                .iter()
+                .filter(|chunk| matches!(chunk, Chunk::Conflict(_)))
+                .count(),
+            2
+        );
+        assert_eq!(
             chunks_to_string(&resolved),
             "\
 <<<<<<< HEAD
 ours-start
-ours-end
 ||||||| base
 base-start
+=======
+>>>>>>> branch
+<<<<<<< HEAD
+ours-end
+||||||| base
 base-end
 =======
 >>>>>>> branch
@@ -706,9 +728,13 @@ base-end
             "\
 <<<<<<< HEAD
 ours-start
-ours-end
 ||||||| base
 base-start
+=======
+>>>>>>> branch
+<<<<<<< HEAD
+ours-end
+||||||| base
 base-end
 =======
 >>>>>>> branch
