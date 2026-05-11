@@ -561,7 +561,7 @@ fn test_delete_modify_conflict_reduction_is_written_back() {
 
     assert_eq!(
         fs::read_to_string(p.join("file.txt")).unwrap(),
-        "top\n<<<<<<< LOCAL\nmodified\n||||||| BASE\nbase\n=======\n>>>>>>> REMOTE\nbottom\n"
+        "<<<<<<< LOCAL\nmodified\n||||||| BASE\nbase\n=======\n>>>>>>> REMOTE\n"
     );
     assert!(String::from_utf8_lossy(&output.stdout).contains("1 reduced"));
 }
@@ -625,15 +625,9 @@ base-end
         "\
 <<<<<<< HEAD
 ours-start
-||||||| base
-base-start
-=======
->>>>>>> branch
-shared-a
-shared-b
-<<<<<<< HEAD
 ours-end
 ||||||| base
+base-start
 base-end
 =======
 >>>>>>> branch

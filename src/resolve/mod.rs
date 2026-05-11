@@ -7,7 +7,7 @@ mod window;
 use crate::parse::parse_conflicts;
 use crate::types::{Chunk, Conflict, ConflictBody, FileResult, Resolution};
 
-use internal::reduce_internal_common;
+use internal::{reduce_delete_modify_common, reduce_internal_common};
 use normalize::PreprocessedConflict;
 use window::ConflictWindow;
 
@@ -40,6 +40,7 @@ impl Default for ResolveOptions {
 enum ResolverOutcome {
     Resolved(ConflictBody),
     Reduced(ConflictWindow),
+    ReducedConflict(Conflict),
     Unchanged,
 }
 
@@ -50,6 +51,7 @@ impl ResolverOutcome {
             Self::Reduced(window) => {
                 Resolution::PartiallyReduced(window.reduced_conflict(template))
             }
+            Self::ReducedConflict(conflict) => Resolution::PartiallyReduced(conflict),
             Self::Unchanged => Resolution::Unchanged,
         }
     }
@@ -58,6 +60,7 @@ impl ResolverOutcome {
         match self {
             Self::Resolved(body) => body.to_text(),
             Self::Reduced(window) => window.render_reduced_conflict_text(template),
+            Self::ReducedConflict(conflict) => conflict.to_conflict_text(),
             Self::Unchanged => template.to_conflict_text(),
         }
     }
@@ -70,6 +73,11 @@ impl ResolverOutcome {
                 failed: 0,
             },
             Self::Reduced(_) => FileResult {
+                resolved: 0,
+                partially_resolved: 1,
+                failed: 0,
+            },
+            Self::ReducedConflict(_) => FileResult {
                 resolved: 0,
                 partially_resolved: 1,
                 failed: 0,
@@ -226,13 +234,16 @@ impl PreprocessedConflict {
             return ResolverOutcome::Unchanged;
         }
 
-        let window = ConflictWindow::from_conflict(conflict);
-        if !window.is_reduced() {
+        if conflict.is_delete_modify() {
+            if let Some(reduced) = reduce_delete_modify_common(conflict) {
+                return ResolverOutcome::ReducedConflict(reduced);
+            }
             return ResolverOutcome::Unchanged;
         }
 
-        if conflict.is_delete_modify() {
-            return ResolverOutcome::Reduced(window);
+        let window = ConflictWindow::from_conflict(conflict);
+        if !window.is_reduced() {
+            return ResolverOutcome::Unchanged;
         }
 
         if let Some(body) = window.core().resolve(options) {
@@ -542,15 +553,9 @@ base-end
             "\
 <<<<<<< HEAD
 ours-start
-||||||| base
-base-start
-=======
->>>>>>> branch
-shared-a
-shared-b
-<<<<<<< HEAD
 ours-end
 ||||||| base
+base-start
 base-end
 =======
 >>>>>>> branch
@@ -581,14 +586,9 @@ base-end
             "\
 <<<<<<< HEAD
 ours-start
-||||||| base
-base-start
-=======
->>>>>>> branch
-shared
-<<<<<<< HEAD
 ours-end
 ||||||| base
+base-start
 base-end
 =======
 >>>>>>> branch
