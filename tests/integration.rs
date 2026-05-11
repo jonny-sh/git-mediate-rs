@@ -567,6 +567,81 @@ fn test_delete_modify_conflict_reduction_is_written_back() {
 }
 
 #[test]
+fn test_internal_common_reduction_is_written_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("file.txt");
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(dir.path())
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+
+    git(&["init"]);
+    git(&["config", "merge.conflictstyle", "diff3"]);
+
+    fs::write(
+        &file_path,
+        "\
+<<<<<<< HEAD
+ours-start
+shared-a
+shared-b
+ours-end
+||||||| base
+base-start
+shared-a
+shared-b
+base-end
+=======
+>>>>>>> branch
+",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-mediate"))
+        .args(["--merge-file", "file.txt"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "git-mediate should still fail on reduced-but-unresolved conflicts"
+    );
+    assert_eq!(
+        fs::read_to_string(&file_path).unwrap(),
+        "\
+<<<<<<< HEAD
+ours-start
+||||||| base
+base-start
+=======
+>>>>>>> branch
+shared-a
+shared-b
+<<<<<<< HEAD
+ours-end
+||||||| base
+base-end
+=======
+>>>>>>> branch
+"
+    );
+}
+
+#[test]
 fn test_git_mediate_options_env_is_applied() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("file.txt");

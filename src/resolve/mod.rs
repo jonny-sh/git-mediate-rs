@@ -1,3 +1,4 @@
+mod internal;
 mod normalize;
 mod split;
 mod strategies;
@@ -6,6 +7,7 @@ mod window;
 use crate::parse::parse_conflicts;
 use crate::types::{Chunk, Conflict, ConflictBody, FileResult, Resolution};
 
+use internal::reduce_internal_common;
 use normalize::PreprocessedConflict;
 use window::ConflictWindow;
 
@@ -134,12 +136,24 @@ fn resolve_conflict_text(conflict: &Conflict, options: &ResolveOptions) -> (File
     for part in &parts {
         let processed = part.preprocess(options);
         let outcome = processed.resolve(options);
-        let part_stats = outcome.file_result();
+        let mut part_stats = outcome.file_result();
+        let mut text = outcome.render_text(processed.as_conflict());
+
+        if options.reduce && !matches!(&outcome, ResolverOutcome::Resolved(_)) {
+            if let Some(reduced_text) = reduce_internal_common_text(&text) {
+                part_stats = FileResult {
+                    resolved: 0,
+                    partially_resolved: 1,
+                    failed: 0,
+                };
+                text = reduced_text;
+            }
+        }
 
         aggregate.resolved += part_stats.resolved;
         aggregate.partially_resolved += part_stats.partially_resolved;
         aggregate.failed += part_stats.failed;
-        combined.push_str(&outcome.render_text(processed.as_conflict()));
+        combined.push_str(&text);
     }
 
     if parts.len() > 1 {
@@ -159,6 +173,28 @@ fn resolve_conflict_text(conflict: &Conflict, options: &ResolveOptions) -> (File
     }
 
     (aggregate, combined)
+}
+
+fn reduce_internal_common_text(text: &str) -> Option<String> {
+    let chunks = parse_conflicts(text).ok()?;
+    let mut out = String::new();
+    let mut changed = false;
+
+    for chunk in chunks {
+        match chunk {
+            Chunk::Plain(text) => out.push_str(&text),
+            Chunk::Conflict(conflict) => {
+                if let Some(reduced) = reduce_internal_common(&conflict) {
+                    out.push_str(&reduced);
+                    changed = true;
+                } else {
+                    out.push_str(&conflict.to_conflict_text());
+                }
+            }
+        }
+    }
+
+    changed.then_some(out)
 }
 
 impl Conflict {
@@ -479,5 +515,84 @@ still-theirs
                     && reduced.bodies.base == body(&[])
                     && reduced.bodies.theirs == body(&[])
         ));
+    }
+
+    #[test]
+    fn test_internal_common_block_reduces_delete_modify_conflict() {
+        let input = "\
+<<<<<<< HEAD
+ours-start
+shared-a
+shared-b
+ours-end
+||||||| base
+base-start
+shared-a
+shared-b
+base-end
+=======
+>>>>>>> branch
+";
+        let chunks = parse_conflicts(input).unwrap();
+        let (resolved, stats) = resolve_chunks(chunks);
+
+        assert_eq!(stats.partially_resolved, 1);
+        assert_eq!(
+            chunks_to_string(&resolved),
+            "\
+<<<<<<< HEAD
+ours-start
+||||||| base
+base-start
+=======
+>>>>>>> branch
+shared-a
+shared-b
+<<<<<<< HEAD
+ours-end
+||||||| base
+base-end
+=======
+>>>>>>> branch
+"
+        );
+    }
+
+    #[test]
+    fn test_internal_common_block_uses_normalized_line_endings() {
+        let input = "\
+<<<<<<< HEAD
+ours-start\r
+shared\r
+ours-end\r
+||||||| base
+base-start
+shared
+base-end
+=======
+>>>>>>> branch
+";
+        let chunks = parse_conflicts(input).unwrap();
+        let (resolved, stats) = resolve_chunks(chunks);
+
+        assert_eq!(stats.partially_resolved, 1);
+        assert_eq!(
+            chunks_to_string(&resolved),
+            "\
+<<<<<<< HEAD
+ours-start
+||||||| base
+base-start
+=======
+>>>>>>> branch
+shared
+<<<<<<< HEAD
+ours-end
+||||||| base
+base-end
+=======
+>>>>>>> branch
+"
+        );
     }
 }
