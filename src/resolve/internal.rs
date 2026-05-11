@@ -1,4 +1,4 @@
-use crate::types::{Conflict, ConflictBody, ConflictSides};
+use crate::types::{Chunk, Conflict, ConflictBody, ConflictSides};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Side {
@@ -16,21 +16,18 @@ struct CommonBlock {
     len: usize,
 }
 
-pub(super) fn reduce_internal_common(conflict: &Conflict) -> Option<String> {
-    if is_delete_modify(conflict) {
+pub(super) fn reduce_internal_common(conflict: &Conflict) -> Option<Vec<Chunk>> {
+    if conflict.is_delete_modify() {
         return None;
     }
 
-    let reduced = render_internal_common_reduction(conflict);
-    if reduced == conflict.to_conflict_text() {
-        None
-    } else {
-        Some(reduced)
-    }
+    let reduced = internal_common_reduction(conflict);
+    let changed = !matches!(reduced.as_slice(), [Chunk::Conflict(reduced)] if reduced == conflict);
+    changed.then_some(reduced)
 }
 
 pub(super) fn reduce_delete_modify_common(conflict: &Conflict) -> Option<Conflict> {
-    if !is_delete_modify(conflict) {
+    if !conflict.is_delete_modify() {
         return None;
     }
 
@@ -51,11 +48,6 @@ pub(super) fn reduce_delete_modify_common(conflict: &Conflict) -> Option<Conflic
     };
 
     changed.then(|| conflict.with_bodies(bodies))
-}
-
-fn is_delete_modify(conflict: &Conflict) -> bool {
-    !conflict.bodies.base.is_empty()
-        && (conflict.bodies.ours.is_empty() ^ conflict.bodies.theirs.is_empty())
 }
 
 fn without_deleted_common_blocks(
@@ -95,32 +87,36 @@ fn without_common_blocks_by(
     (left_before, right_before, true)
 }
 
-fn render_internal_common_reduction(conflict: &Conflict) -> String {
+fn internal_common_reduction(conflict: &Conflict) -> Vec<Chunk> {
     let Some(block) = find_internal_common_block(conflict) else {
-        return conflict.to_conflict_text();
+        return vec![Chunk::Conflict(conflict.clone())];
     };
 
     let before = split_bodies(conflict, block, Segment::Before);
     let common = common_body(conflict, block);
     let after = split_bodies(conflict, block, Segment::After);
 
-    let mut out = String::new();
-    if !all_empty(&before) {
-        out.push_str(&render_internal_common_reduction(
-            &conflict.with_bodies(before),
-        ));
+    let mut chunks = Vec::new();
+    if !before.all_empty() {
+        chunks.extend(internal_common_reduction(&conflict.with_bodies(before)));
     }
-    out.push_str(&common.to_text());
-    if !all_empty(&after) {
-        out.push_str(&render_internal_common_reduction(
-            &conflict.with_bodies(after),
-        ));
+    push_plain_chunk(&mut chunks, common.to_text());
+    if !after.all_empty() {
+        chunks.extend(internal_common_reduction(&conflict.with_bodies(after)));
     }
-    out
+    chunks
 }
 
-fn all_empty(bodies: &ConflictSides<ConflictBody>) -> bool {
-    bodies.ours.is_empty() && bodies.base.is_empty() && bodies.theirs.is_empty()
+fn push_plain_chunk(chunks: &mut Vec<Chunk>, text: String) {
+    if text.is_empty() {
+        return;
+    }
+
+    if let Some(Chunk::Plain(previous)) = chunks.last_mut() {
+        previous.push_str(&text);
+    } else {
+        chunks.push(Chunk::Plain(text));
+    }
 }
 
 fn find_internal_common_block(conflict: &Conflict) -> Option<CommonBlock> {

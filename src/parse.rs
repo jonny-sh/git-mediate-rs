@@ -129,7 +129,6 @@ pub fn parse_conflicts(content: &str) -> Result<Vec<Chunk>, ParseError> {
         } else {
             chunks.push(Chunk::Plain(plain));
         }
-    } else if plain_start == lines.len() && content.ends_with('\n') && !chunks.is_empty() {
     }
 
     if found_any_conflict && !has_base_marker {

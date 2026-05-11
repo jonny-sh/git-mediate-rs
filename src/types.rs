@@ -140,6 +140,12 @@ impl<T: PartialEq> ConflictSides<T> {
     }
 }
 
+impl ConflictSides<ConflictBody> {
+    pub(crate) fn all_empty(&self) -> bool {
+        self.ours.is_empty() && self.base.is_empty() && self.theirs.is_empty()
+    }
+}
+
 /// A line of source content paired with its original line number.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SrcContent {
@@ -213,6 +219,11 @@ impl Conflict {
             markers: self.markers.clone(),
             bodies,
         }
+    }
+
+    pub(crate) fn is_delete_modify(&self) -> bool {
+        !self.bodies.base.is_empty()
+            && (self.bodies.ours.is_empty() ^ self.bodies.theirs.is_empty())
     }
 
     /// Reconstructs the full conflict text with markers.

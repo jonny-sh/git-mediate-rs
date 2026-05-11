@@ -4,7 +4,6 @@ mod split;
 mod strategies;
 mod window;
 
-use crate::parse::parse_conflicts;
 use crate::types::{Chunk, Conflict, ConflictBody, FileResult, Resolution};
 
 use internal::{reduce_delete_modify_common, reduce_internal_common};
@@ -58,12 +57,12 @@ impl ResolverOutcome {
         }
     }
 
-    fn render_text(&self, template: &Conflict) -> String {
+    fn into_chunks(self, template: &Conflict) -> Vec<Chunk> {
         match self {
-            Self::Resolved(body) => body.to_text(),
-            Self::Reduced(window) => window.render_reduced_conflict_text(template),
-            Self::ReducedConflict(conflict) => conflict.to_conflict_text(),
-            Self::Unchanged => template.to_conflict_text(),
+            Self::Resolved(body) => body_to_chunks(body),
+            Self::Reduced(window) => window.reduced_chunks(template),
+            Self::ReducedConflict(conflict) => vec![Chunk::Conflict(conflict)],
+            Self::Unchanged => vec![Chunk::Conflict(template.clone())],
         }
     }
 
@@ -116,14 +115,11 @@ pub fn resolve_chunks_with_options(
         match chunk {
             Chunk::Plain(text) => result.push(Chunk::Plain(text)),
             Chunk::Conflict(conflict) => {
-                let (chunk_stats, text) = resolve_conflict_text(&conflict, options);
+                let (chunk_stats, resolved) = resolve_conflict_chunks(&conflict, options);
                 stats.resolved += chunk_stats.resolved;
                 stats.partially_resolved += chunk_stats.partially_resolved;
                 stats.failed += chunk_stats.failed;
-
-                let rebuilt = parse_conflicts(&text)
-                    .expect("resolver should always emit valid plain text or diff3 conflicts");
-                result.extend(rebuilt);
+                append_chunks(&mut result, resolved);
             }
         }
     }
@@ -131,7 +127,10 @@ pub fn resolve_chunks_with_options(
     (result, stats)
 }
 
-fn resolve_conflict_text(conflict: &Conflict, options: &ResolveOptions) -> (FileResult, String) {
+fn resolve_conflict_chunks(
+    conflict: &Conflict,
+    options: &ResolveOptions,
+) -> (FileResult, Vec<Chunk>) {
     let parts = if options.split_markers {
         conflict
             .split_marked_parts()
@@ -141,29 +140,14 @@ fn resolve_conflict_text(conflict: &Conflict, options: &ResolveOptions) -> (File
     };
 
     let mut aggregate = FileResult::default();
-    let mut combined = String::new();
+    let mut combined = Vec::new();
 
     for part in &parts {
-        let processed = part.preprocess(options);
-        let outcome = processed.resolve(options);
-        let mut part_stats = outcome.file_result();
-        let mut text = outcome.render_text(processed.as_conflict());
-
-        if options.reduce && !matches!(&outcome, ResolverOutcome::Resolved(_)) {
-            if let Some(reduced_text) = reduce_internal_common_text(&text) {
-                part_stats = FileResult {
-                    resolved: 0,
-                    partially_resolved: 1,
-                    failed: 0,
-                };
-                text = reduced_text;
-            }
-        }
-
+        let (part_stats, chunks) = resolve_conflict_part_chunks(part, options);
         aggregate.resolved += part_stats.resolved;
         aggregate.partially_resolved += part_stats.partially_resolved;
         aggregate.failed += part_stats.failed;
-        combined.push_str(&text);
+        append_chunks(&mut combined, chunks);
     }
 
     if parts.len() > 1 {
@@ -185,26 +169,78 @@ fn resolve_conflict_text(conflict: &Conflict, options: &ResolveOptions) -> (File
     (aggregate, combined)
 }
 
-fn reduce_internal_common_text(text: &str) -> Option<String> {
-    let chunks = parse_conflicts(text).ok()?;
-    let mut out = String::new();
-    let mut changed = false;
+fn resolve_conflict_part_chunks(
+    conflict: &Conflict,
+    options: &ResolveOptions,
+) -> (FileResult, Vec<Chunk>) {
+    let processed = conflict.preprocess(options);
+    let template = processed.as_conflict();
+    let outcome = processed.resolve(options);
+    let is_resolved = matches!(&outcome, ResolverOutcome::Resolved(_));
+    let mut part_stats = outcome.file_result();
+    let mut chunks = outcome.into_chunks(template);
 
-    for chunk in chunks {
+    if options.reduce && !is_resolved && reduce_internal_common_chunks(&mut chunks) {
+        part_stats = FileResult {
+            resolved: 0,
+            partially_resolved: 1,
+            failed: 0,
+        };
+    }
+
+    (part_stats, chunks)
+}
+
+fn reduce_internal_common_chunks(chunks: &mut Vec<Chunk>) -> bool {
+    let original = std::mem::take(chunks);
+    let mut changed = false;
+    let mut reduced_chunks = Vec::new();
+
+    for chunk in original {
         match chunk {
-            Chunk::Plain(text) => out.push_str(&text),
+            Chunk::Plain(text) => append_chunk(&mut reduced_chunks, Chunk::Plain(text)),
             Chunk::Conflict(conflict) => {
                 if let Some(reduced) = reduce_internal_common(&conflict) {
-                    out.push_str(&reduced);
+                    append_chunks(&mut reduced_chunks, reduced);
                     changed = true;
                 } else {
-                    out.push_str(&conflict.to_conflict_text());
+                    append_chunk(&mut reduced_chunks, Chunk::Conflict(conflict));
                 }
             }
         }
     }
 
-    changed.then_some(out)
+    *chunks = reduced_chunks;
+    changed
+}
+
+fn body_to_chunks(body: ConflictBody) -> Vec<Chunk> {
+    let text = body.to_text();
+    if text.is_empty() {
+        Vec::new()
+    } else {
+        vec![Chunk::Plain(text)]
+    }
+}
+
+fn append_chunks(result: &mut Vec<Chunk>, chunks: Vec<Chunk>) {
+    for chunk in chunks {
+        append_chunk(result, chunk);
+    }
+}
+
+fn append_chunk(result: &mut Vec<Chunk>, chunk: Chunk) {
+    match chunk {
+        Chunk::Plain(text) if text.is_empty() => {}
+        Chunk::Plain(text) => {
+            if let Some(Chunk::Plain(previous)) = result.last_mut() {
+                previous.push_str(&text);
+            } else {
+                result.push(Chunk::Plain(text));
+            }
+        }
+        Chunk::Conflict(conflict) => result.push(Chunk::Conflict(conflict)),
+    }
 }
 
 impl Conflict {
@@ -241,10 +277,7 @@ impl PreprocessedConflict {
                 return ResolverOutcome::Unchanged;
             }
             if let Some(reduced) = reduce_delete_modify_common(conflict) {
-                if reduced.bodies.ours.is_empty()
-                    && reduced.bodies.base.is_empty()
-                    && reduced.bodies.theirs.is_empty()
-                {
+                if reduced.bodies.all_empty() {
                     return ResolverOutcome::Resolved(ConflictBody::default());
                 }
                 return ResolverOutcome::ReducedConflict(reduced);
@@ -265,17 +298,10 @@ impl PreprocessedConflict {
     }
 }
 
-impl Conflict {
-    fn is_delete_modify(&self) -> bool {
-        !self.bodies.base.is_empty()
-            && (self.bodies.ours.is_empty() ^ self.bodies.theirs.is_empty())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse::chunks_to_string;
+    use crate::parse::{chunks_to_string, parse_conflicts};
     use crate::types::{ConflictMarkers, ConflictSides, SrcContent};
 
     fn body(lines: &[&str]) -> ConflictBody {
@@ -532,6 +558,29 @@ still-theirs
     }
 
     #[test]
+    fn test_chunk_resolution_uses_direct_conflict_pipeline_for_structured_reduction() {
+        let conflict = make_conflict(
+            &["shared\r", "ours\r", "tail\r"],
+            &["shared", "base", "tail"],
+            &[],
+        );
+        let opts = ResolveOptions {
+            reduce_deleted: true,
+            ..ResolveOptions::default()
+        };
+
+        let direct = conflict.resolve_with_options(&opts);
+        let (resolved, stats) = resolve_chunks_with_options(vec![Chunk::Conflict(conflict)], &opts);
+
+        assert_eq!(stats.partially_resolved, 1);
+        assert!(matches!(
+            (direct, resolved.as_slice()),
+            (Resolution::PartiallyReduced(direct), [Chunk::Conflict(chunk)])
+                if direct == *chunk
+        ));
+    }
+
+    #[test]
     fn test_delete_modify_reduction_does_not_auto_resolve_reduced_core() {
         let conflict = make_conflict(&["shared", "added"], &["shared"], &[]);
         let opts = ResolveOptions {
@@ -662,6 +711,44 @@ ours-end
 base-start
 base-end
 =======
+>>>>>>> branch
+"
+        );
+    }
+
+    #[test]
+    fn test_internal_common_block_reduction_does_not_reparse_rendered_text() {
+        let input = "\
+<<<<<<< HEAD
+ours-start
+<<<<<<< shared-marker
+ours-end
+||||||| base
+=======
+theirs-start
+<<<<<<< shared-marker
+theirs-end
+>>>>>>> branch
+";
+        let chunks = parse_conflicts(input).unwrap();
+        let (resolved, stats) = resolve_chunks(chunks);
+
+        assert_eq!(stats.partially_resolved, 1);
+        assert_eq!(
+            chunks_to_string(&resolved),
+            "\
+<<<<<<< HEAD
+ours-start
+||||||| base
+=======
+theirs-start
+>>>>>>> branch
+<<<<<<< shared-marker
+<<<<<<< HEAD
+ours-end
+||||||| base
+=======
+theirs-end
 >>>>>>> branch
 "
         );
