@@ -520,7 +520,7 @@ mod tests {
             assert!(out.status.success(), "git {:?} failed", args);
         };
 
-        git(&["init"]);
+        git(&["init", "-b", "main"]);
         git(&["config", "merge.conflictstyle", "diff3"]);
         std::fs::write(
             repo.join("file.txt"),

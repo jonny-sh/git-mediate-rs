@@ -27,7 +27,7 @@ fn setup_conflict_repo() -> tempfile::TempDir {
         );
     };
 
-    git(&["init"]);
+    git(&["init", "-b", "main"]);
     git(&["config", "merge.conflictstyle", "diff3"]);
 
     // Base commit
@@ -349,7 +349,7 @@ fn test_partial_reduction_is_written_back() {
         );
     };
 
-    git(&["init"]);
+    git(&["init", "-b", "main"]);
     git(&["config", "merge.conflictstyle", "diff3"]);
 
     let original = "\
@@ -448,7 +448,7 @@ fn test_delete_modify_conflict_is_prepared_for_mediation() {
         );
     };
 
-    git(&["init"]);
+    git(&["init", "-b", "main"]);
     git(&["config", "merge.conflictstyle", "diff3"]);
     fs::write(p.join("file.txt"), "hello\n").unwrap();
     git(&["add", "file.txt"]);
@@ -523,7 +523,7 @@ fn test_delete_modify_conflict_reduction_is_written_back() {
         );
     };
 
-    git(&["init"]);
+    git(&["init", "-b", "main"]);
     git(&["config", "merge.conflictstyle", "diff3"]);
     fs::write(p.join("file.txt"), "top\nbase\nbottom\n").unwrap();
     git(&["add", "file.txt"]);
@@ -621,7 +621,7 @@ fn test_reduce_deleted_resolves_whitespace_only_delete_modify_conflict() {
         );
     };
 
-    git(&["init"]);
+    git(&["init", "-b", "main"]);
     git(&["config", "merge.conflictstyle", "diff3"]);
 
     fs::write(
@@ -677,7 +677,7 @@ fn test_internal_common_reduction_splits_delete_modify_conflicts() {
         );
     };
 
-    git(&["init"]);
+    git(&["init", "-b", "main"]);
     git(&["config", "merge.conflictstyle", "diff3"]);
 
     fs::write(
@@ -751,7 +751,7 @@ fn test_git_mediate_options_env_is_applied() {
         );
     };
 
-    git(&["init"]);
+    git(&["init", "-b", "main"]);
     git(&["config", "merge.conflictstyle", "diff3"]);
 
     fs::write(

@@ -1,0 +1,106 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Cargo package version to publish, without a leading v
+        required: true
+        type: string
+      dry_run:
+        description: Run all publish checks without uploading or tagging
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: Publish crate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Validate publish request
+        id: release
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+          IS_DRY_RUN: ${{ inputs.dry_run }}
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "Publish workflow must be run from the main branch, got ${GITHUB_REF}." >&2
+            exit 1
+          fi
+
+          package_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          if [ "${package_version}" != "${REQUESTED_VERSION}" ]; then
+            echo "Requested version ${REQUESTED_VERSION} does not match Cargo.toml version ${package_version}." >&2
+            exit 1
+          fi
+
+          tag="v${package_version}"
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "Tag ${tag} already exists." >&2
+            exit 1
+          fi
+
+          if [ "${IS_DRY_RUN}" != "true" ] && [ -z "${CRATES_IO_TOKEN}" ]; then
+            echo "CRATES_IO_TOKEN is required for a real publish." >&2
+            exit 1
+          fi
+
+          echo "version=${package_version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - name: Verify crate package
+        run: cargo package --locked
+
+      - name: Publish dry run
+        if: ${{ inputs.dry_run }}
+        run: cargo publish --dry-run --locked
+
+      - name: Publish to crates.io
+        if: ${{ !inputs.dry_run }}
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish --locked --token "${CRATES_IO_TOKEN}"
+
+      - name: Tag release
+        if: ${{ !inputs.dry_run }}
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "${TAG}"
