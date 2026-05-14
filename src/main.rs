@@ -6,41 +6,70 @@ use git_mediate::resolve::ResolveOptions;
 
 #[derive(Debug, Clone, Args, Default)]
 struct ResolutionCliArgs {
-    #[arg(short = 'U', long = "context")]
+    #[arg(
+        short = 'U',
+        long = "context",
+        help = "Number of context lines to show in conflict diffs"
+    )]
     context: Option<usize>,
 
-    #[arg(long = "untabify")]
+    #[arg(
+        long = "untabify",
+        value_name = "TABSIZE",
+        help = "Normalize tabs to spaces before resolving conflicts"
+    )]
     untabify: Option<usize>,
 
-    #[arg(long = "trivial")]
+    #[arg(long = "trivial", help = "Enable trivial conflict resolution")]
     trivial: bool,
-    #[arg(long = "no-trivial")]
+    #[arg(long = "no-trivial", help = "Disable trivial conflict resolution")]
     no_trivial: bool,
 
-    #[arg(long = "reduce")]
+    #[arg(
+        long = "reduce",
+        help = "Enable prefix, suffix, and common-block reduction"
+    )]
     reduce: bool,
-    #[arg(long = "no-reduce")]
+    #[arg(
+        long = "no-reduce",
+        help = "Disable prefix, suffix, and common-block reduction"
+    )]
     no_reduce: bool,
 
-    #[arg(long = "line-endings")]
+    #[arg(long = "line-endings", help = "Enable line-ending normalization")]
     line_endings: bool,
-    #[arg(long = "no-line-endings")]
+    #[arg(long = "no-line-endings", help = "Disable line-ending normalization")]
     no_line_endings: bool,
 
-    #[arg(long = "lines-added-around")]
+    #[arg(
+        long = "lines-added-around",
+        help = "Resolve conflicts where both sides added lines around unchanged base text"
+    )]
     lines_added_around: bool,
 
-    #[arg(long = "reduce-deleted")]
+    #[arg(
+        long = "reduce-deleted",
+        help = "Reduce delete/modify conflicts by stripping common non-deleted context"
+    )]
     reduce_deleted: bool,
 
-    #[arg(long = "split-markers")]
+    #[arg(
+        long = "split-markers",
+        help = "Enable splitting conflicts at matched markers"
+    )]
     split_markers: bool,
-    #[arg(long = "no-split-markers")]
+    #[arg(
+        long = "no-split-markers",
+        help = "Disable splitting conflicts at matched markers"
+    )]
     no_split_markers: bool,
 
-    #[arg(long = "indentation")]
+    #[arg(
+        long = "indentation",
+        help = "Resolve conflicts where one side only changed indentation"
+    )]
     indentation: bool,
-    #[arg(long = "no-indentation")]
+    #[arg(long = "no-indentation", help = "Disable indentation-aware resolution")]
     no_indentation: bool,
 }
 
@@ -102,34 +131,55 @@ struct EnvArgs {
     about = "Automatically resolve trivial git merge conflicts"
 )]
 struct Cli {
-    #[arg(short = 'e', long = "editor")]
+    #[arg(
+        short = 'e',
+        long = "editor",
+        help = "Open $EDITOR on files with remaining conflicts"
+    )]
     editor: bool,
 
-    #[arg(short = 'd', long = "diff")]
+    #[arg(
+        short = 'd',
+        long = "diff",
+        help = "Show each side's diff against the base for remaining conflicts"
+    )]
     show_diff: bool,
 
-    #[arg(short = '2', long = "diff2")]
+    #[arg(
+        short = '2',
+        long = "diff2",
+        help = "Show direct diffs between the two sides for remaining conflicts"
+    )]
     show_diff2: bool,
 
-    #[arg(short = 's', long = "style", alias = "set-conflict-style")]
+    #[arg(
+        short = 's',
+        long = "set-conflict-style",
+        alias = "style",
+        help = "Set global merge.conflictstyle to diff3 before processing"
+    )]
     set_conflict_style: bool,
 
-    #[arg(short = 'f', long = "merge-file")]
+    #[arg(short = 'f', long = "merge-file", help = "Process only this file")]
     merge_file: Option<String>,
 
-    #[arg(short = 'c', long = "color")]
+    #[arg(short = 'c', long = "color", help = "Force colored output")]
     color: bool,
 
-    #[arg(short = 'C', long = "no-color")]
+    #[arg(short = 'C', long = "no-color", help = "Disable colored output")]
     no_color: bool,
 
-    #[arg(short = 'n', long)]
+    #[arg(
+        short = 'n',
+        long,
+        help = "Print what would change without modifying files"
+    )]
     dry_run: bool,
 
-    #[arg(long)]
+    #[arg(long, help = "Do not stage resolved files with git add")]
     no_add: bool,
 
-    #[arg(short, long)]
+    #[arg(short, long, help = "Print verbose progress information")]
     verbose: bool,
 
     #[command(flatten)]

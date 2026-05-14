@@ -87,16 +87,29 @@ Usage: git-mediate [OPTIONS]
 
 Options:
   -e, --editor                   Open $EDITOR on files with remaining conflicts
-  -d, --diff                     Show diff of each side against the base for remaining conflicts
-  -2, --diff2                    Show diff between the two sides for remaining conflicts
-  -s, --set-conflict-style       Set merge.conflictstyle to diff3
-  -f, --merge-file <MERGE_FILE>  Process only this file instead of all unmerged files
+  -d, --diff                     Show each side's diff against the base for remaining conflicts
+  -2, --diff2                    Show direct diffs between the two sides for remaining conflicts
+  -s, --set-conflict-style       Set global merge.conflictstyle to diff3 before processing
+  -f, --merge-file <MERGE_FILE>  Process only this file
   -c, --color                    Force colored output
   -C, --no-color                 Disable colored output
-  -n, --dry-run                  Only print what would be done, don't modify files
-      --no-add                   Don't stage resolved files with git add
+  -n, --dry-run                  Print what would change without modifying files
+      --no-add                   Do not stage resolved files with git add
+  -v, --verbose                  Print verbose progress information
+  -U, --context <CONTEXT>        Number of context lines to show in conflict diffs
+      --untabify <TABSIZE>       Normalize tabs to spaces before resolving conflicts
+      --trivial                  Enable trivial conflict resolution
+      --no-trivial               Disable trivial conflict resolution
+      --reduce                   Enable prefix, suffix, and common-block reduction
+      --no-reduce                Disable prefix, suffix, and common-block reduction
+      --line-endings             Enable line-ending normalization
+      --no-line-endings          Disable line-ending normalization
+      --lines-added-around       Resolve conflicts where both sides added lines around unchanged base text
       --reduce-deleted           Reduce delete/modify conflicts by stripping common non-deleted context
-  -v, --verbose                  Be verbose about what's happening
+      --split-markers            Enable splitting conflicts at matched markers
+      --no-split-markers         Disable splitting conflicts at matched markers
+      --indentation              Resolve conflicts where one side only changed indentation
+      --no-indentation           Disable indentation-aware resolution
   -h, --help                     Print help
   -V, --version                  Print version
 ```
